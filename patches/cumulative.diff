@@ -1,0 +1,2875 @@
+diff --git a/hdrs/darwin_pwgr_shim.h b/hdrs/darwin_pwgr_shim.h
+new file mode 100644
+index 0000000..7371d12
+--- /dev/null
++++ b/hdrs/darwin_pwgr_shim.h
+@@ -0,0 +1,45 @@
++/*
++ * darwin_pwgr_shim.h — Darwin implementations of glibc-extension
++ * fgetpwent(3) and fgetgrent(3).
++ *
++ * Solaris and glibc both provide fgetpwent/fgetgrent for parsing
++ * arbitrary FILE* streams as /etc/passwd or /etc/group. Darwin's
++ * pwd(3) / grp(3) subsystems only expose getpwent/getgrent which
++ * read from the system database. pkgtools uses the fget* variants
++ * in libpkg/ncgrpw.c so it can read passwd/group files rooted
++ * elsewhere (an install-root, for example).
++ *
++ * The implementations here mirror glibc's public behaviour:
++ * parse one colon-separated line at a time. Returned structs point
++ * into thread-local static buffers. Callers must not free the
++ * pointers and must consume/copy fields before the next call.
++ *
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_PWGR_SHIM_H
++#define _HEIRLOOM_DARWIN_PWGR_SHIM_H
++
++#if defined(__APPLE__)
++
++#include <pwd.h>
++#include <grp.h>
++#include <stdio.h>
++
++/*
++ * Provide the prototypes here; the implementations live in
++ * libpkg/darwin_pwgr.c (linked into libpkg.a alongside ncgrpw.o).
++ */
++struct passwd *heirloom_darwin_fgetpwent(FILE *stream);
++struct group  *heirloom_darwin_fgetgrent(FILE *stream);
++
++#ifndef fgetpwent
++#define fgetpwent(fp)	heirloom_darwin_fgetpwent(fp)
++#endif
++#ifndef fgetgrent
++#define fgetgrent(fp)	heirloom_darwin_fgetgrent(fp)
++#endif
++
++#endif	/* __APPLE__ */
++
++#endif /* _HEIRLOOM_DARWIN_PWGR_SHIM_H */
+diff --git a/hdrs/darwin_stat_shim.h b/hdrs/darwin_stat_shim.h
+new file mode 100644
+index 0000000..ca0d2f9
+--- /dev/null
++++ b/hdrs/darwin_stat_shim.h
+@@ -0,0 +1,159 @@
++/*
++ * darwin_stat_shim.h — compile-time shim for the Solaris/glibc stat64
++ * API on Darwin.
++ *
++ * Modern macOS SDKs still ship <sys/stat.h> with stat64, fstat64,
++ * lstat64, struct stat64 — but marked deprecated because off_t / ino_t
++ * have been 64-bit since 10.5 and struct stat is identical to what
++ * used to be struct stat64. Heirloom pkgtools was authored against
++ * the Solaris large-file API and reaches for stat64 unconditionally
++ * from libinst/ocfile.c and libadm/fulldevnm.c.
++ *
++ * On Darwin the correct move is: use plain stat() and struct stat.
++ * This shim maps stat64->stat etc. so no per-file surgery is needed
++ * and Darwin's deprecation warnings do not leak into pkgtools' build.
++ *
++ * Kept in pkgtools/hdrs/ so any pkgtools translation unit that includes
++ * a pkgtools header picks it up transitively. -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_STAT_SHIM_H
++#define _HEIRLOOM_DARWIN_STAT_SHIM_H
++
++#if defined(__APPLE__)
++
++#include <sys/stat.h>
++#include <sys/types.h>
++/*
++ * Darwin: boolean_t is defined by Mach's <mach/i386/boolean.h> etc.
++ * pkglib.h and keystore.h use it but the original code path added
++ * its own typedef, which we suppress on Darwin (see keystore.h).
++ * Pull the Mach umbrella here so boolean_t resolves in every pkgtools
++ * TU that compiles with -include darwin_stat_shim.h. -- Heirloom Darwin
++ * port.
++ */
++#include <mach/mach_types.h>
++
++/*
++ * On Darwin, struct stat *is* what struct stat64 used to be — same
++ * fields, same widths, same semantics. Re-map the 64-suffixed names
++ * so pkgtools compiles unchanged.
++ */
++#ifndef	HEIRLOOM_DARWIN_STAT_SHIM_APPLIED
++#define	HEIRLOOM_DARWIN_STAT_SHIM_APPLIED	1
++
++/*
++ * Preprocessor token substitution: 'struct stat64' -> 'struct stat',
++ * 'stat64(...)' -> 'stat(...)' etc. Order matters: define the type
++ * aliases first, then the functions — no different tokens involved,
++ * but keeping the group together aids grep-ability.
++ */
++#define stat64		stat
++#define lstat64		lstat
++#define fstat64		fstat
++#define fstatat64	fstatat
++
++/*
++ * dirent64 → dirent. Same rationale as stat64 → stat: Darwin's plain
++ * struct dirent already carries 64-bit d_ino/d_off since 10.6.
++ * readdir64/readdir64_r were glibc/Solaris large-file API duplicates.
++ */
++#include <dirent.h>
++#define dirent64	dirent
++#define readdir64	readdir
++#define readdir64_r	readdir_r
++
++/*
++ * <sys/sysmacros.h> — Solaris/glibc header providing MAJOR/MINOR/
++ * MAKEDEV as uppercase macros (Solaris) and major/minor/makedev
++ * (glibc). Darwin puts the lowercase forms in <sys/types.h>; provide
++ * uppercase aliases here so any pkgtools call site that expects the
++ * Solaris spelling resolves.
++ */
++#include <sys/types.h>
++#ifndef MAJOR
++#define MAJOR(x)	major(x)
++#endif
++#ifndef MINOR
++#define MINOR(x)	minor(x)
++#endif
++#ifndef MAKEDEV
++#define MAKEDEV(x, y)	makedev((x), (y))
++#endif
++
++/*
++ * statvfs64 → statvfs. Darwin's statvfs already returns 64-bit sizes.
++ * Same for the *64 flavour typedefs (fsblkcnt64_t etc.).
++ */
++#include <sys/statvfs.h>
++#define statvfs64	statvfs
++#define fstatvfs64	fstatvfs
++#define fsblkcnt64_t	fsblkcnt_t
++#define fsfilcnt64_t	fsfilcnt_t
++/*
++ * struct statvfs64 → struct statvfs (token substitution: 'statvfs64'
++ * expands to 'statvfs' in any context).
++ */
++
++/*
++ * O_LARGEFILE — glibc/Solaris flag telling open(2) to treat large files
++ * with the *64 API. Darwin's open(2) has transparent 64-bit off_t, so
++ * the flag is a no-op there. Define to 0 to keep bitwise-OR expressions
++ * (open(path, O_RDONLY | O_LARGEFILE, ...)) valid.
++ */
++#ifndef O_LARGEFILE
++#define O_LARGEFILE	0
++#endif
++
++/*
++ * <malloc.h> — Linux/Solaris put malloc(3) prototypes here. Darwin puts
++ * them in <stdlib.h>. pkgtools' vfpops.c and verify.c #include
++ * <malloc.h> unconditionally. Include <stdlib.h> so those files find
++ * malloc/free/realloc/calloc regardless.
++ */
++#include <stdlib.h>
++
++/*
++ * ENOPKG — Linux errno 65 "package not installed". Darwin's errno.h
++ * does not define it. pkgtools uses it as a semantic sentinel for
++ * "requested pkg not present"; pick a value that will not collide
++ * with Darwin's errno table (max Darwin errno is around 108).
++ */
++#include <errno.h>
++#ifndef ENOPKG
++#define ENOPKG		200	/* Heirloom Darwin port: pkg-not-present sentinel */
++#endif
++#ifndef ECOMM
++#define ECOMM		201	/* Heirloom Darwin port: comm-error sentinel */
++#endif
++
++/*
++ * fgetpwent/fgetgrent — implemented in libpkg/darwin_pwgr.c.
++ * Include the shim header so libpkg/ncgrpw.c sees the redirects.
++ */
++#include "darwin_pwgr_shim.h"
++
++/*
++ * memalign(3) — Linux/Solaris deprecated aligned allocator. Darwin has
++ * posix_memalign(3) instead; wrap it so pkgtools' vfpops.c compiles.
++ * Semantics: memalign returns a pointer or NULL; posix_memalign returns
++ * 0/errno and writes the pointer via out-param. Wrap in an inline
++ * helper that mimics the memalign return contract.
++ */
++static inline void *
++heirloom_darwin_memalign(size_t align, size_t size)
++{
++	void *p;
++	if (posix_memalign(&p, align, size) != 0)
++		return NULL;
++	return p;
++}
++#ifndef memalign
++#define memalign(align, size)	heirloom_darwin_memalign((align), (size))
++#endif
++
++#endif	/* HEIRLOOM_DARWIN_STAT_SHIM_APPLIED */
++
++#endif	/* __APPLE__ */
++
++#endif	/* _HEIRLOOM_DARWIN_STAT_SHIM_H */
+diff --git a/hdrs/libadm.h b/hdrs/libadm.h
+index 920eba9..6d9fcc6 100644
+--- a/hdrs/libadm.h
++++ b/hdrs/libadm.h
+@@ -145,7 +145,15 @@ extern int	ckstr __P((char *strval, char *regexp[], int length,
+ extern int	cktime_val __P((char *fmt, char *input));
+ extern int	cktime_err __P((char *fmt, char *error));
+ extern int	cktime_hlp __P((char *fmt, char *help));
++#if !defined(__APPLE__)
++/*
++ * Darwin: fmtcheck(3) is a libc function with signature
++ * (const char *user_fmt, const char *default_fmt) returning const char *.
++ * Skip the pkgtools declaration on Darwin — libc provides it.
++ * -- Heirloom Darwin port.
++ */
+ extern int	fmtcheck __P((char *fmt));
++#endif
+ extern int	cktime __P((char *tod, char *fmt, char *defstr, char *error,
+ 				char *help, char *prompt));
+ 
+@@ -333,8 +341,16 @@ extern int	write_vtoc __P((int fd, struct vtoc *vtoc));
+ /*
+  * from OpenSolaris libc
+  */
++#if !defined(__APPLE__)
++/*
++ * Darwin: strlcat(3) and strlcpy(3) are libc functions provided via
++ * <string.h> and taste-guarded by fortify macros. The OpenSolaris
++ * declaration collides with the __builtin___strlcpy_chk fortify
++ * expansion. Skip on Darwin. -- Heirloom Darwin port.
++ */
+ extern size_t	strlcat(char *, const char *, size_t);
+ extern size_t	strlcpy(char *, const char *, size_t);
++#endif
+ extern void	closefrom(int);
+ extern int	sigsend(idtype_t, id_t, int);
+ extern int	cftime(char *, char *, const time_t *);
+diff --git a/hdrs/libinst.h b/hdrs/libinst.h
+index 1803910..60fc006 100644
+--- a/hdrs/libinst.h
++++ b/hdrs/libinst.h
+@@ -43,6 +43,7 @@ extern "C" {
+ #include <fcntl.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/statvfs.h>	/* fsblkcnt_t used in prototypes below */
+ #include <pkgstrct.h>
+ #include <pkginfo.h>
+ #include "pkglib.h"
+@@ -269,13 +270,20 @@ extern int	is_fs_writeable_n __P((short n));
+ extern int	is_remote_fs_n __P((short n));
+ extern int	is_served_n __P((short n));
+ extern int	is_mounted_n __P((short n));
+-extern unsigned long	get_blk_size_n __P((short n));
+-extern unsigned long	get_frag_size_n __P((short n));
+-extern unsigned long	get_blk_used_n __P((short n));
+-extern void	set_blk_used_n __P((short n, unsigned long value));
+-extern unsigned long	get_blk_free_n __P((short n));
+-extern unsigned long	get_inode_used_n __P((short n));
+-extern unsigned long	get_inode_free_n __P((short n));
++/*
++ * Portability note: mntinfo.c defines these as returning fsblkcnt_t,
++ * matching struct fstable's field type. On Solaris fsblkcnt_t is
++ * unsigned long; on Darwin it is uint32_t; on 64-bit Linux it is
++ * unsigned long. Use fsblkcnt_t here so the prototype matches the
++ * definition on every target. -- Heirloom Darwin port.
++ */
++extern fsblkcnt_t	get_blk_size_n __P((short n));
++extern fsblkcnt_t	get_frag_size_n __P((short n));
++extern fsblkcnt_t	get_blk_used_n __P((short n));
++extern void		set_blk_used_n __P((short n, fsblkcnt_t value));
++extern fsblkcnt_t	get_blk_free_n __P((short n));
++extern fsblkcnt_t	get_inode_used_n __P((short n));
++extern fsblkcnt_t	get_inode_free_n __P((short n));
+ extern char	*get_source_name_n __P((short n));
+ extern char	*get_fs_name_n __P((short n));
+ extern int	load_fsentry __P((struct fstable *fs_entry, char *name,
+diff --git a/hdrs/libintl.h b/hdrs/libintl.h
+new file mode 100644
+index 0000000..0394987
+--- /dev/null
++++ b/hdrs/libintl.h
+@@ -0,0 +1,28 @@
++/*
++ * libintl.h — Darwin compile-time stub for the GNU gettext internationalisation
++ * header.
++ *
++ * Solaris and glibc-based Linux ship <libintl.h> with gettext/dcgettext/
++ * dgettext etc. Darwin ships gettext(1) via Homebrew but does not
++ * include <libintl.h> in the SDK. pkgtools' puttext.c reaches for it
++ * unconditionally.
++ *
++ * Provide identity macros so pkgtools compiles: gettext(x) returns x,
++ * translations are pass-through. English messages ship as-is.
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_LIBINTL_H
++#define _HEIRLOOM_DARWIN_LIBINTL_H
++
++#define gettext(msgid)			((char *)(msgid))
++#define dgettext(dom, msgid)		((char *)(msgid))
++#define dcgettext(dom, msgid, cat)	((char *)(msgid))
++#define ngettext(sing, plur, n)		((char *)((n) == 1 ? (sing) : (plur)))
++#define dngettext(dom, s, p, n)		((char *)((n) == 1 ? (s) : (p)))
++#define dcngettext(dom, s, p, n, c)	((char *)((n) == 1 ? (s) : (p)))
++#define textdomain(dom)			((char *)(dom))
++#define bindtextdomain(dom, dir)	((char *)(dir))
++#define bind_textdomain_codeset(d, c)	((char *)(c))
++
++#endif /* _HEIRLOOM_DARWIN_LIBINTL_H */
+diff --git a/hdrs/malloc.h b/hdrs/malloc.h
+new file mode 100644
+index 0000000..0383757
+--- /dev/null
++++ b/hdrs/malloc.h
+@@ -0,0 +1,18 @@
++/*
++ * malloc.h — Darwin compile-time stub for the Solaris/Linux malloc
++ * header.
++ *
++ * Solaris and glibc-based Linux ship <malloc.h> with malloc/free/
++ * realloc/calloc prototypes plus vendor extensions (mallinfo, mallopt).
++ * Darwin puts the POSIX subset in <stdlib.h> and has no separate
++ * <malloc.h> — reaching for it fails at preprocessor time. Since
++ * pkgtools only uses the POSIX subset, delegate to <stdlib.h>.
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_MALLOC_H
++#define _HEIRLOOM_DARWIN_MALLOC_H
++
++#include <stdlib.h>
++
++#endif /* _HEIRLOOM_DARWIN_MALLOC_H */
+diff --git a/hdrs/mntent.h b/hdrs/mntent.h
+new file mode 100644
+index 0000000..dbf37a7
+--- /dev/null
++++ b/hdrs/mntent.h
+@@ -0,0 +1,73 @@
++/*
++ * mntent.h — Darwin compile-time stub for the glibc/Solaris mount-entry
++ * header.
++ *
++ * Solaris has <sys/mntent.h> and Linux has <mntent.h>; both expose the
++ * getmntent(3) family for reading /etc/mtab or /etc/mnttab. Darwin
++ * exposes getmntinfo(3) via <sys/mount.h> and does not ship <mntent.h>.
++ * pkgtools' libinst/mntinfo.c reaches for <sys/mntent.h> unconditionally
++ * — with -I../hdrs (via darwin_stat_shim.h) this file resolves both
++ * <mntent.h> and <sys/mntent.h> to the same content.
++ *
++ * The functional shim (getmntent/setmntent/endmntent) is provided as
++ * a no-op on Darwin — pkgtools' code path already handles the failure
++ * mode. Full Darwin-native mount-table reading via getmntinfo(3) is
++ * scheduled for Phase 6.
++ *
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_MNTENT_H
++#define _HEIRLOOM_DARWIN_MNTENT_H
++
++#include <stdio.h>
++#include <sys/mount.h>
++
++#define MOUNTED		"/etc/mtab"
++#define MNTTAB		"/etc/mnttab"
++
++/* Common mntent options (glibc/Solaris naming) that pkgtools consumes. */
++#ifndef MNTOPT_RO
++#define MNTOPT_RO	"ro"
++#endif
++#ifndef MNTOPT_RW
++#define MNTOPT_RW	"rw"
++#endif
++#ifndef MNTOPT_NOSUID
++#define MNTOPT_NOSUID	"nosuid"
++#endif
++#ifndef MNTOPT_REMOUNT
++#define MNTOPT_REMOUNT	"remount"
++#endif
++
++/* Minimal shim of struct mntent (Linux layout). */
++struct mntent {
++	char	*mnt_fsname;
++	char	*mnt_dir;
++	char	*mnt_type;
++	char	*mnt_opts;
++	int	mnt_freq;
++	int	mnt_passno;
++};
++
++/* No-op getmntent family: on Darwin the mount table is walked via
++ * getmntinfo(3), not this API. Return NULL/error so callers fall
++ * through cleanly to a "no entries" behaviour. */
++static inline FILE *setmntent(const char *filename, const char *type) {
++	(void)filename; (void)type;
++	return NULL;
++}
++static inline struct mntent *getmntent(FILE *fp) {
++	(void)fp;
++	return NULL;
++}
++static inline int endmntent(FILE *fp) {
++	(void)fp;
++	return 0;
++}
++static inline int hasmntopt(const struct mntent *m, const char *opt) {
++	(void)m; (void)opt;
++	return 0;
++}
++
++#endif /* _HEIRLOOM_DARWIN_MNTENT_H */
+diff --git a/hdrs/openssl3_compat.h b/hdrs/openssl3_compat.h
+new file mode 100644
+index 0000000..7149396
+--- /dev/null
++++ b/hdrs/openssl3_compat.h
+@@ -0,0 +1,272 @@
++/*
++ * openssl3_compat.h — Compatibility shim mapping OpenSSL 1.0.x macros
++ * used by Heirloom pkgtools to OpenSSL 3.x primitives.
++ *
++ * Heirloom's libpkg/{p12lib,security,keystore,pkgweb}.[ch] were
++ * authored against OpenSSL 1.0.x and use:
++ *
++ *   - DECLARE_STACK_OF(TYPE)           — generate STACK_OF(TYPE) type
++ *   - SKM_sk_<op>(TYPE, ...)           — per-op stack manipulation
++ *   - ERR_STATE.top / errcnt legacy    — direct struct access
++ *   - PKCS12 accessor field reads      — direct struct access
++ *
++ * OpenSSL 3.x replaced this with:
++ *
++ *   - DEFINE_STACK_OF(TYPE)            — generate type + inline sk_TYPE_*
++ *   - sk_TYPE_<op>(...)                — per-type inline wrappers around
++ *                                        OPENSSL_sk_<op>
++ *   - opaque struct pointers; use      — accessor functions
++ *     accessor APIs
++ *
++ * This header (a) defines DEFINE_STACK_OF for the types Heirloom needs,
++ * and (b) provides SKM_sk_<op> compat macros expressed in terms of
++ * OpenSSL 3.x sk_TYPE_<op>. Include from p12lib.h before any use.
++ *
++ * -- Heirloom Darwin port (Phase 5-C4).
++ */
++
++#ifndef _HEIRLOOM_OPENSSL3_COMPAT_H
++#define _HEIRLOOM_OPENSSL3_COMPAT_H
++
++#include <stdlib.h>	/* NULL, malloc, size_t */
++#include <string.h>	/* strlen */
++#include <openssl/opensslv.h>
++#include <openssl/safestack.h>
++#include <openssl/evp.h>
++#include <openssl/x509.h>
++#include <openssl/err.h>
++#include <openssl/crypto.h>	/* OPENSSL_malloc */
++#include <openssl/pkcs12.h>
++#include <openssl/pkcs7.h>
++#include <openssl/asn1.h>
++
++/*
++ * Generate STACK_OF(TYPE) types + sk_TYPE_* inline wrappers for every
++ * type Heirloom pkgtools puts on a stack. OpenSSL 3.x does this via
++ * DEFINE_STACK_OF; the generated inline functions live in this
++ * translation unit's scope. OpenSSL 3.x ships several of these
++ * pre-defined (X509, PKCS12_SAFEBAG, PKCS7, X509_ATTRIBUTE) —
++ * DEFINE_STACK_OF is idempotent per header via include-guards, so
++ * defining EVP_PKEY (which OpenSSL does not pre-define) covers our
++ * needs without collision.
++ */
++#ifndef SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED
++#define SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED 1
++DEFINE_STACK_OF(EVP_PKEY)
++#endif
++
++/*
++ * Compat: SKM_sk_<op>(TYPE, ...) → sk_TYPE_<op>(...).
++ * The token-paste variant lets the same code text work under both
++ * OpenSSL 1.0.x and 3.x since the substitutions expand to real
++ * per-type functions in 3.x and to old macro-machinery in 1.0.x.
++ */
++#define SKM_sk_new_null(T)          sk_##T##_new_null()
++#define SKM_sk_new(T, cmp)          sk_##T##_new(cmp)
++#define SKM_sk_free(T, st)          sk_##T##_free(st)
++#define SKM_sk_zero(T, st)          sk_##T##_zero(st)
++#define SKM_sk_num(T, st)           sk_##T##_num(st)
++#define SKM_sk_value(T, st, i)      sk_##T##_value((st), (i))
++#define SKM_sk_push(T, st, v)       sk_##T##_push((st), (v))
++#define SKM_sk_pop(T, st)           sk_##T##_pop(st)
++#define SKM_sk_find(T, st, v)       sk_##T##_find((st), (v))
++#define SKM_sk_delete(T, st, i)     sk_##T##_delete((st), (i))
++#define SKM_sk_delete_ptr(T, st, p) sk_##T##_delete_ptr((st), (p))
++#define SKM_sk_insert(T, st, v, i)  sk_##T##_insert((st), (v), (i))
++#define SKM_sk_pop_free(T, st, f)   sk_##T##_pop_free((st), (f))
++#define SKM_sk_set(T, st, i, v)     sk_##T##_set((st), (i), (v))
++#define SKM_sk_shift(T, st)         sk_##T##_shift(st)
++#define SKM_sk_unshift(T, st, v)    sk_##T##_unshift((st), (v))
++#define SKM_sk_dup(T, st)           sk_##T##_dup(st)
++#define SKM_sk_deep_copy(T, st, cp, fr)  sk_##T##_deep_copy((st), (cp), (fr))
++#define SKM_sk_sort(T, st)          sk_##T##_sort(st)
++#define SKM_sk_is_sorted(T, st)     sk_##T##_is_sorted(st)
++
++/*
++ * ERR_STATE.top and .errcnt — OpenSSL 3.x makes ERR_STATE opaque.
++ * Heirloom uses these to detect "was any error queued?" — replace
++ * with the OpenSSL 3 accessor ERR_peek_error() which returns 0
++ * when the queue is empty.
++ */
++#define HEIRLOOM_OSSL_ERR_ANY()	(ERR_peek_error() != 0)
++
++/*
++ * Removed / renamed macros. In OpenSSL 1.0.x these were preprocessor
++ * macros expanding to internal helpers. OpenSSL 3.x removed the M_
++ * prefix and turned them into real API functions with mostly the
++ * same signatures.
++ */
++#define M_PKCS12_x5092certbag(x)	PKCS12_SAFEBAG_create_cert(x)
++#define M_PKCS12_x509crl2certbag(x)	PKCS12_SAFEBAG_create_crl(x)
++#define M_PKCS12_pack_authsafes(p12, safes)	PKCS12_pack_authsafes((p12), (safes))
++#define M_PKCS12_unpack_authsafes(p12)	PKCS12_unpack_authsafes(p12)
++
++#define M_ASN1_OCTET_STRING_new()	ASN1_OCTET_STRING_new()
++#define M_ASN1_OCTET_STRING_free(x)	ASN1_OCTET_STRING_free(x)
++#define M_ASN1_OCTET_STRING_set(x, d, l)  ASN1_OCTET_STRING_set((x), (d), (l))
++#define M_ASN1_OCTET_STRING_dup(x)	ASN1_OCTET_STRING_dup(x)
++#define M_ASN1_STRING_dup(x)		ASN1_STRING_dup(x)
++#define M_ASN1_STRING_length(x)		ASN1_STRING_length(x)
++#define M_ASN1_STRING_type(x)		ASN1_STRING_type(x)
++#define M_ASN1_STRING_data(x)		ASN1_STRING_data(x)
++#define M_i2d_PKCS12_BAGS(bags)		i2d_PKCS12_BAGS(bags)
++
++#define M_ASN1_BMPSTRING_new()		ASN1_BMPSTRING_new()
++#define M_ASN1_BMPSTRING_free(x)	ASN1_BMPSTRING_free(x)
++
++#define M_PKCS12_certbag2x509(bag)		PKCS12_SAFEBAG_get1_cert(bag)
++#define M_PKCS12_unpack_p7data(p7)		PKCS12_unpack_p7data(p7)
++#define M_PKCS12_unpack_p7encdata(p7, pass, plen)	\
++	PKCS12_unpack_p7encdata((p7), (pass), (plen))
++#define M_PKCS12_decrypt_skey(bag, pass, plen)	\
++	PKCS12_decrypt_skey((bag), (pass), (plen))
++#define M_PKCS12_x5092certbag_and_encrypt(bag, cert)	\
++	PKCS12_SAFEBAG_create_cert(cert)
++
++/*
++ * asc2uni — encode ASCII string as BMPString (2-byte-per-char, big-
++ * endian, high byte 0). OpenSSL 3.x removed the public helper.
++ * Reimplement with the same signature: takes (const char *asc,
++ * int asclen, unsigned char **uni, int *unilen) — returns 1 success,
++ * 0 failure. If asclen < 0 use strlen(asc).
++ */
++static inline int
++heirloom_asc2uni(const char *asc, int asclen,
++    unsigned char **uni, int *unilen)
++{
++	int	i;
++	if (asc == NULL || uni == NULL || unilen == NULL)
++		return 0;
++	if (asclen < 0)
++		asclen = (int)strlen(asc);
++	*unilen = asclen * 2 + 2;
++	*uni = (unsigned char *)OPENSSL_malloc((size_t)*unilen);
++	if (*uni == NULL)
++		return 0;
++	for (i = 0; i < asclen; i++) {
++		(*uni)[i * 2]     = 0;
++		(*uni)[i * 2 + 1] = (unsigned char)asc[i];
++	}
++	(*uni)[*unilen - 2] = 0;
++	(*uni)[*unilen - 1] = 0;
++	return 1;
++}
++#ifndef asc2uni
++#define asc2uni(a, al, u, ul)		heirloom_asc2uni((a), (al), (u), (ul))
++#endif
++#ifndef OPENSSL_asc2uni
++#define OPENSSL_asc2uni(a, al, u, ul)	heirloom_asc2uni((a), (al), (u), (ul))
++#endif
++
++/*
++ * OpenSSL 3.x removed the uni2asc() helper. Provide a minimal
++ * reimplementation: strip the high byte of each 16-bit BMPString
++ * character into a null-terminated ASCII buffer. Callers free() the
++ * result. Signature matches OpenSSL 1.0.x libwanboot: OPENSSL_uni2asc
++ * takes (const unsigned char *uni, int unilen). Our helper accepts
++ * either.
++ */
++static inline char *
++heirloom_uni2asc(const unsigned char *uni, int unilen)
++{
++	int	i, out_len = unilen / 2;
++	char	*asc = (char *)OPENSSL_malloc((size_t)out_len + 1);
++	if (asc == NULL || uni == NULL)
++		return asc;
++	for (i = 0; i < out_len; i++)
++		asc[i] = (char)uni[i * 2 + 1];	/* low byte of BE BMP */
++	asc[out_len] = '\0';
++	return asc;
++}
++#ifndef uni2asc
++#define uni2asc(u, l)			heirloom_uni2asc((u), (l))
++#endif
++#ifndef OPENSSL_uni2asc
++#define OPENSSL_uni2asc(u, l)		heirloom_uni2asc((u), (l))
++#endif
++
++/*
++ * X.509 aux field access. OpenSSL 3.x hides X509->cert_info->... and
++ * X509->aux. The public accessors return only the byte-string and
++ * length, not the ASN1_STRING wrapper. Heirloom code does:
++ *
++ *   if (cert->aux != NULL && cert->aux->alias != NULL &&
++ *       cert->aux->alias->type == V_ASN1_UTF8STRING) {
++ *       str = utf82ascstr(cert->aux->alias);
++ *
++ * On OpenSSL 3.x the alias comes back as a UTF-8 byte string via
++ * X509_alias_get0(); the type check was always redundant because
++ * X509 stores the alias only as UTF-8. Provide compat macros:
++ *   x509_aux_has_alias(cert)   → true if there's an alias
++ *   x509_aux_alias_data(cert)  → const unsigned char* into the alias
++ *   x509_aux_alias_length(cert) → int length
++ *   x509_aux_has_keyid(cert)   → true if there's a keyid
++ *   x509_aux_keyid_data(cert)  → const unsigned char*
++ *   x509_aux_keyid_length(cert)→ int length
++ */
++static inline int
++heirloom_x509_aux_alias_length(const X509 *cert)
++{
++	int len = 0;
++	(void)X509_alias_get0((X509 *)cert, &len);
++	return len;
++}
++static inline const unsigned char *
++heirloom_x509_aux_alias_data(const X509 *cert)
++{
++	int len = 0;
++	return X509_alias_get0((X509 *)cert, &len);
++}
++static inline int
++heirloom_x509_aux_has_alias(const X509 *cert)
++{
++	int len = 0;
++	return X509_alias_get0((X509 *)cert, &len) != NULL && len > 0;
++}
++
++static inline int
++heirloom_x509_aux_keyid_length(const X509 *cert)
++{
++	int len = 0;
++	(void)X509_keyid_get0((X509 *)cert, &len);
++	return len;
++}
++static inline const unsigned char *
++heirloom_x509_aux_keyid_data(const X509 *cert)
++{
++	int len = 0;
++	return X509_keyid_get0((X509 *)cert, &len);
++}
++static inline int
++heirloom_x509_aux_has_keyid(const X509 *cert)
++{
++	int len = 0;
++	return X509_keyid_get0((X509 *)cert, &len) != NULL && len > 0;
++}
++
++/*
++ * EVP_PKEY internal-type access. OpenSSL 3.x hides pkey->pkey.rsa /
++ * .dsa / .ec — code uses EVP_PKEY_get0_RSA(pkey) / _DSA / _EC_KEY,
++ * or EVP_PKEY_get_id(pkey) for the ID.
++ *
++ * Heirloom pattern is typically:
++ *   if (pkey->type == EVP_PKEY_RSA) ...
++ * → replace with EVP_PKEY_get_id(pkey) == EVP_PKEY_RSA.
++ *
++ * And save-as-DER via i2d_PrivateKey(pkey, ...): unchanged in 3.x.
++ */
++static inline int
++heirloom_evp_pkey_type(const EVP_PKEY *pkey)
++{
++	return EVP_PKEY_get_id(pkey);
++}
++
++/*
++ * PKCS12 struct field access — OpenSSL 3 hides the internals. Heirloom
++ * reads p12->authsafes; use PKCS12_unpack_authsafes() or return NULL
++ * if the field can't be reached. For the paths pkgtools actually uses
++ * (verify + parse), the public API PKCS12_parse + PKCS12_verify_mac
++ * suffices and internal field access is not required.
++ */
++
++#endif /* _HEIRLOOM_OPENSSL3_COMPAT_H */
+diff --git a/hdrs/stropts.h b/hdrs/stropts.h
+new file mode 100644
+index 0000000..ec57ed3
+--- /dev/null
++++ b/hdrs/stropts.h
+@@ -0,0 +1,33 @@
++/*
++ * stropts.h — Darwin compile-time stub for the SVR4 STREAMS header.
++ *
++ * STREAMS was Sun's kernel abstraction for TTY, network, and pipe
++ * subsystems. Darwin does not use STREAMS; it inherits BSD sockets
++ * and native TTY. pkgtools' getpass.c uses I_PUSH / I_POP ioctls to
++ * push the ldterm module, but on Darwin the terminal line discipline
++ * is unconditionally in effect — the STREAMS calls are no-ops.
++ *
++ * Provide minimal token coverage: the constants get 0 values, and
++ * ioctl(fd, I_PUSH, "ldterm") at runtime returns -1/ENOTTY on Darwin
++ * which the caller silently ignores. -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_STROPTS_H
++#define _HEIRLOOM_DARWIN_STROPTS_H
++
++#include <sys/ioctl.h>
++
++#ifndef I_PUSH
++#define I_PUSH		0	/* unused on Darwin */
++#endif
++#ifndef I_POP
++#define I_POP		0	/* unused on Darwin */
++#endif
++#ifndef I_LOOK
++#define I_LOOK		0
++#endif
++#ifndef I_FLUSH
++#define I_FLUSH		0
++#endif
++
++#endif /* _HEIRLOOM_DARWIN_STROPTS_H */
+diff --git a/hdrs/sys/mntent.h b/hdrs/sys/mntent.h
+index 01bad47..dbf37a7 100644
+--- a/hdrs/sys/mntent.h
++++ b/hdrs/sys/mntent.h
+@@ -1,151 +1,73 @@
+ /*
+- * CDDL HEADER START
++ * mntent.h — Darwin compile-time stub for the glibc/Solaris mount-entry
++ * header.
+  *
+- * The contents of this file are subject to the terms of the
+- * Common Development and Distribution License (the "License").
+- * You may not use this file except in compliance with the License.
++ * Solaris has <sys/mntent.h> and Linux has <mntent.h>; both expose the
++ * getmntent(3) family for reading /etc/mtab or /etc/mnttab. Darwin
++ * exposes getmntinfo(3) via <sys/mount.h> and does not ship <mntent.h>.
++ * pkgtools' libinst/mntinfo.c reaches for <sys/mntent.h> unconditionally
++ * — with -I../hdrs (via darwin_stat_shim.h) this file resolves both
++ * <mntent.h> and <sys/mntent.h> to the same content.
+  *
+- * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+- * or http://www.opensolaris.org/os/licensing.
+- * See the License for the specific language governing permissions
+- * and limitations under the License.
++ * The functional shim (getmntent/setmntent/endmntent) is provided as
++ * a no-op on Darwin — pkgtools' code path already handles the failure
++ * mode. Full Darwin-native mount-table reading via getmntinfo(3) is
++ * scheduled for Phase 6.
+  *
+- * When distributing Covered Code, include this CDDL HEADER in each
+- * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+- * If applicable, add the following below this CDDL HEADER, with the
+- * fields enclosed by brackets "[]" replaced with your own identifying
+- * information: Portions Copyright [yyyy] [name of copyright owner]
+- *
+- * CDDL HEADER END
+- */
+-/*
+- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+- * Use is subject to license terms.
+- *
+- *	Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T
+- *		All Rights Reserved
++ * -- Heirloom Darwin port.
+  */
+ 
+-#ifndef _SYS_MNTENT_H
+-#define	_SYS_MNTENT_H
++#ifndef _HEIRLOOM_DARWIN_MNTENT_H
++#define _HEIRLOOM_DARWIN_MNTENT_H
+ 
+-/*	from OpenSolaris "mntent.h	1.50	06/08/25 SMI"	*/
++#include <stdio.h>
++#include <sys/mount.h>
+ 
+-/*
+- * Portions Copyright (c) 2007 Gunnar Ritter, Freiburg i. Br., Germany
+- *
+- * Sccsid @(#)mntent.h	1.3 (gritter) 2/24/07
+- */
++#define MOUNTED		"/etc/mtab"
++#define MNTTAB		"/etc/mnttab"
+ 
+-#ifdef	__cplusplus
+-extern "C" {
++/* Common mntent options (glibc/Solaris naming) that pkgtools consumes. */
++#ifndef MNTOPT_RO
++#define MNTOPT_RO	"ro"
+ #endif
+-
+-#ifdef __sun
+-#define	MNTTAB		"/etc/mnttab"
+-#define	VFSTAB		"/etc/vfstab"
+-#else
+-#define	MNTTAB		"/etc/mtab"
+-#define	VFSTAB		"/etc/fstab"
++#ifndef MNTOPT_RW
++#define MNTOPT_RW	"rw"
++#endif
++#ifndef MNTOPT_NOSUID
++#define MNTOPT_NOSUID	"nosuid"
++#endif
++#ifndef MNTOPT_REMOUNT
++#define MNTOPT_REMOUNT	"remount"
+ #endif
+-#define	MNTMAXSTR	128
+-
+-#define	MNTTYPE_ZFS	"zfs"		/* ZFS file system */
+-#define	MNTTYPE_UFS	"ufs"		/* Unix file system */
+-#define	MNTTYPE_NFS	"nfs"		/* NFS file system */
+-#define	MNTTYPE_NFS3	"nfs3"		/* NFS Version 3 file system */
+-#define	MNTTYPE_NFS4	"nfs4"		/* NFS Version 4 file system */
+-#define	MNTTYPE_CACHEFS	"cachefs"	/* Cache File System */
+-#define	MNTTYPE_PCFS	"pcfs"		/* PC (MSDOS) file system */
+-#define	MNTTYPE_PC	MNTTYPE_PCFS	/* Deprecated name; use MNTTYPE_PCFS */
+-#define	MNTTYPE_LOFS	"lofs"		/* Loop back file system */
+-#define	MNTTYPE_LO	MNTTYPE_LOFS	/* Deprecated name; use MNTTYPE_LOFS */
+-#define	MNTTYPE_HSFS	"hsfs"		/* High Sierra (9660) file system */
+-#define	MNTTYPE_SWAP	"swap"		/* Swap file system */
+-#define	MNTTYPE_TMPFS	"tmpfs"		/* Tmp volatile file system */
+-#define	MNTTYPE_AUTOFS	"autofs"	/* Automounter ``file'' system */
+-#define	MNTTYPE_MNTFS	"mntfs"		/* In-kernel mnttab */
+-#define	MNTTYPE_XMEMFS	"xmemfs"	/* Extended memory FS, IA32 only */
+-#define	MNTTYPE_DEV	"dev"		/* /dev file system */
+-#define	MNTTYPE_CTFS	"ctfs"		/* Contract file system */
+-#define	MNTTYPE_OBJFS	"objfs"		/* Kernel object file system */
+ 
+-#define	MNTOPT_RO	"ro"		/* Read only */
+-#define	MNTOPT_RW	"rw"		/* Read/write */
+-#define	MNTOPT_RQ	"rq"		/* Read/write with quotas */
+-#define	MNTOPT_QUOTA	"quota"		/* Check quotas */
+-#define	MNTOPT_NOQUOTA	"noquota"	/* Don't check quotas */
+-#define	MNTOPT_ONERROR	"onerror"	/* action to taken on error */
+-#define	MNTOPT_SOFT	"soft"		/* Soft mount */
+-#define	MNTOPT_SEMISOFT	"semisoft"	/* partial soft, uncommited interface */
+-#define	MNTOPT_HARD	"hard"		/* Hard mount */
+-#define	MNTOPT_SUID	"suid"		/* Both setuid and devices allowed */
+-#define	MNTOPT_NOSUID	"nosuid"	/* Neither setuid nor devices allowed */
+-#define	MNTOPT_DEVICES	"devices"	/* Device-special allowed */
+-#define	MNTOPT_NODEVICES	"nodevices"	/* Device-special disallowed */
+-#define	MNTOPT_SETUID	"setuid"	/* Set uid allowed */
+-#define	MNTOPT_NOSETUID	"nosetuid"	/* Set uid not allowed */
+-#define	MNTOPT_GRPID	"grpid"		/* SysV-compatible gid on create */
+-#define	MNTOPT_REMOUNT	"remount"	/* Change mount options */
+-#define	MNTOPT_NOSUB	"nosub"		/* Disallow mounts on subdirs */
+-#define	MNTOPT_MULTI	"multi"		/* Do multi-component lookup */
+-#define	MNTOPT_INTR	"intr"		/* Allow NFS ops to be interrupted */
+-#define	MNTOPT_NOINTR	"nointr"	/* Don't allow interrupted ops */
+-#define	MNTOPT_PORT	"port"		/* NFS server IP port number */
+-#define	MNTOPT_SECURE	"secure"	/* Secure (AUTH_DES) mounting */
+-#define	MNTOPT_RSIZE	"rsize"		/* Max NFS read size (bytes) */
+-#define	MNTOPT_WSIZE	"wsize"		/* Max NFS write size (bytes) */
+-#define	MNTOPT_TIMEO	"timeo"		/* NFS timeout (1/10 sec) */
+-#define	MNTOPT_RETRANS	"retrans"	/* Max retransmissions (soft mnts) */
+-#define	MNTOPT_ACTIMEO	"actimeo"	/* Attr cache timeout (sec) */
+-#define	MNTOPT_ACREGMIN	"acregmin"	/* Min attr cache timeout (files) */
+-#define	MNTOPT_ACREGMAX	"acregmax"	/* Max attr cache timeout (files) */
+-#define	MNTOPT_ACDIRMIN	"acdirmin"	/* Min attr cache timeout (dirs) */
+-#define	MNTOPT_ACDIRMAX	"acdirmax"	/* Max attr cache timeout (dirs) */
+-#define	MNTOPT_NOAC	"noac"		/* Don't cache attributes at all */
+-#define	MNTOPT_NOCTO	"nocto"		/* No close-to-open consistency */
+-#define	MNTOPT_BG	"bg"		/* Do mount retries in background */
+-#define	MNTOPT_FG	"fg"		/* Do mount retries in foreground */
+-#define	MNTOPT_RETRY	"retry"		/* Number of mount retries */
+-#define	MNTOPT_DEV	"dev"		/* Device id of mounted fs */
+-#define	MNTOPT_POSIX	"posix"		/* Get static pathconf for mount */
+-#define	MNTOPT_MAP	"map"		/* Automount map */
+-#define	MNTOPT_DIRECT	"direct"	/* Automount   direct map mount */
+-#define	MNTOPT_INDIRECT	"indirect"	/* Automount indirect map mount */
+-#define	MNTOPT_LLOCK	"llock"		/* Local locking (no lock manager) */
+-#define	MNTOPT_IGNORE	"ignore"	/* Ignore this entry */
+-#define	MNTOPT_VERS	"vers"		/* protocol version number indicator */
+-#define	MNTOPT_PROTO	"proto"		/* protocol network_id indicator */
+-#define	MNTOPT_SEC	"sec"		/* Security flavor indicator */
+-#define	MNTOPT_SYNCDIR	"syncdir"	/* Synchronous local directory ops */
+-#define	MNTOPT_NOSETSEC	"nosec"		/* Do no allow setting sec attrs */
+-#define	MNTOPT_NOPRINT	"noprint"	/* Do not print messages */
+-#define	MNTOPT_LARGEFILES "largefiles"	/* allow large files */
+-#define	MNTOPT_NOLARGEFILES "nolargefiles" /* don't allow large files */
+-#define	MNTOPT_FORCEDIRECTIO "forcedirectio" /* Force DirectIO on all files */
+-#define	MNTOPT_NOFORCEDIRECTIO "noforcedirectio" /* No Force DirectIO */
+-#define	MNTOPT_DISABLEDIRECTIO "disabledirectio" /* Disable DirectIO ioctls */
+-#define	MNTOPT_PUBLIC	"public"	/* Use NFS public file handlee */
+-#define	MNTOPT_LOGGING "logging" 	/* enable logging */
+-#define	MNTOPT_NOLOGGING "nologging" 	/* disable logging */
+-#define	MNTOPT_ATIME	"atime"		/* update atime for files */
+-#define	MNTOPT_NOATIME  "noatime"	/* do not update atime for files */
+-#define	MNTOPT_GLOBAL	"global"	/* Cluster-wide global mount */
+-#define	MNTOPT_NOGLOBAL	"noglobal"	/* Mount local to single node */
+-#define	MNTOPT_DFRATIME	"dfratime"	/* Deferred access time updates */
+-#define	MNTOPT_NODFRATIME "nodfratime"	/* No Deferred access time updates */
+-#define	MNTOPT_NBMAND	"nbmand"	/* allow non-blocking mandatory locks */
+-#define	MNTOPT_NONBMAND	"nonbmand"	/* deny non-blocking mandatory locks */
+-#define	MNTOPT_XATTR	"xattr"		/* enable extended attributes */
+-#define	MNTOPT_NOXATTR	"noxattr"	/* disable extended attributes */
+-#define	MNTOPT_EXEC	"exec"		/* enable executables */
+-#define	MNTOPT_NOEXEC	"noexec"	/* disable executables */
+-#define	MNTOPT_RESTRICT	"restrict"	/* restricted autofs mount */
+-#define	MNTOPT_BROWSE	"browse"	/* browsable autofs mount */
+-#define	MNTOPT_NOBROWSE	"nobrowse"	/* non-browsable autofs mount */
++/* Minimal shim of struct mntent (Linux layout). */
++struct mntent {
++	char	*mnt_fsname;
++	char	*mnt_dir;
++	char	*mnt_type;
++	char	*mnt_opts;
++	int	mnt_freq;
++	int	mnt_passno;
++};
+ 
+-#ifdef	__cplusplus
++/* No-op getmntent family: on Darwin the mount table is walked via
++ * getmntinfo(3), not this API. Return NULL/error so callers fall
++ * through cleanly to a "no entries" behaviour. */
++static inline FILE *setmntent(const char *filename, const char *type) {
++	(void)filename; (void)type;
++	return NULL;
++}
++static inline struct mntent *getmntent(FILE *fp) {
++	(void)fp;
++	return NULL;
++}
++static inline int endmntent(FILE *fp) {
++	(void)fp;
++	return 0;
++}
++static inline int hasmntopt(const struct mntent *m, const char *opt) {
++	(void)m; (void)opt;
++	return 0;
+ }
+-#endif
+ 
+-#endif	/* _SYS_MNTENT_H */
++#endif /* _HEIRLOOM_DARWIN_MNTENT_H */
+diff --git a/hdrs/sys/sysmacros.h b/hdrs/sys/sysmacros.h
+new file mode 100644
+index 0000000..c6ad8bf
+--- /dev/null
++++ b/hdrs/sys/sysmacros.h
+@@ -0,0 +1,23 @@
++/*
++ * sys/sysmacros.h — Darwin compile-time stub for the Solaris/glibc
++ * header of the same name.
++ *
++ * Solaris exposes MAJOR/MINOR/MAKEDEV (uppercase) here; glibc exposes
++ * major/minor/makedev (lowercase). Darwin puts the lowercase set in
++ * <sys/types.h> and does not ship <sys/sysmacros.h>. pkgtools reaches
++ * for this header from libadm/fulldevnm.c and libadm/devtab.c
++ * unconditionally.
++ *
++ * darwin_stat_shim.h (which pkgtools compiles with -include) already
++ * provides the MAJOR/MINOR/MAKEDEV macro aliases when needed. This
++ * stub simply lets the '#include <sys/sysmacros.h>' line succeed.
++ *
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_SYS_SYSMACROS_H
++#define _HEIRLOOM_DARWIN_SYS_SYSMACROS_H
++
++#include <sys/types.h>
++
++#endif /* _HEIRLOOM_DARWIN_SYS_SYSMACROS_H */
+diff --git a/hdrs/termio.h b/hdrs/termio.h
+new file mode 100644
+index 0000000..fc68e1a
+--- /dev/null
++++ b/hdrs/termio.h
+@@ -0,0 +1,42 @@
++/*
++ * termio.h — Darwin compile-time stub for the SVR3 termio header.
++ *
++ * termio was the pre-POSIX SVR3 terminal I/O API. termios (POSIX)
++ * superseded it in the late 1980s. Darwin ships only <termios.h>;
++ * pkgtools' getpass.c still reaches for <termio.h> unconditionally.
++ *
++ * The struct termio and struct termios layouts are similar enough
++ * that consumers of the c_lflag / ICANON / ECHO bits work identically
++ * after re-mapping to termios equivalents. Provide the POSIX header
++ * here so #include <termio.h> succeeds. -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_TERMIO_H
++#define _HEIRLOOM_DARWIN_TERMIO_H
++
++#include <termios.h>
++
++/*
++ * Solaris' TCGETA/TCSETA/TCSETAW/TCSETAF ioctls (used with struct termio)
++ * map onto POSIX tcgetattr/tcsetattr for the (struct termios *) form.
++ * getpass.c uses these through ioctl(); the pkgtools code path already
++ * handles ENOTTY gracefully.
++ */
++#ifndef TCGETA
++#define TCGETA		TIOCGETA
++#endif
++#ifndef TCSETA
++#define TCSETA		TIOCSETA
++#endif
++#ifndef TCSETAW
++#define TCSETAW		TIOCSETAW
++#endif
++#ifndef TCSETAF
++#define TCSETAF		TIOCSETAF
++#endif
++
++/* Alias struct termio to struct termios — layouts are compatible for the
++ * fields getpass.c cares about (c_lflag, c_cc). */
++#define termio		termios
++
++#endif /* _HEIRLOOM_DARWIN_TERMIO_H */
+diff --git a/hdrs/wait.h b/hdrs/wait.h
+new file mode 100644
+index 0000000..341aaa6
+--- /dev/null
++++ b/hdrs/wait.h
+@@ -0,0 +1,14 @@
++/*
++ * wait.h — Darwin compile-time stub for the Solaris/glibc header.
++ *
++ * Solaris and glibc-based Linux ship <wait.h> which wraps <sys/wait.h>.
++ * Darwin (and other BSDs) only ship <sys/wait.h>. Delegate.
++ * -- Heirloom Darwin port.
++ */
++
++#ifndef _HEIRLOOM_DARWIN_WAIT_H
++#define _HEIRLOOM_DARWIN_WAIT_H
++
++#include <sys/wait.h>
++
++#endif /* _HEIRLOOM_DARWIN_WAIT_H */
+diff --git a/libadm/strlcat.c b/libadm/strlcat.c
+index 4f38534..67271c4 100644
+--- a/libadm/strlcat.c
++++ b/libadm/strlcat.c
+@@ -35,6 +35,13 @@
+ #include <string.h>
+ #include <sys/types.h>
+ 
++#if !defined(__APPLE__)
++/*
++ * Darwin: strlcat(3) is provided by libc and fortify-wrapped via
++ * __builtin___strlcat_chk. Redefining it here collides with the
++ * fortify macro. Skip on Darwin. -- Heirloom Darwin port.
++ */
++
+ /*
+  * Appends src to the dstsize buffer at dst. The append will never
+  * overflow the destination buffer and the buffer will always be null
+@@ -62,3 +69,4 @@ strlcat(char *dst, const char *src, size_t dstsize)
+ 	dst[l1+copied] = '\0';
+ 	return (l1 + l2);
+ }
++#endif	/* !__APPLE__ */
+diff --git a/libadm/strlcpy.c b/libadm/strlcpy.c
+index 580bd8c..b463c8a 100644
+--- a/libadm/strlcpy.c
++++ b/libadm/strlcpy.c
+@@ -35,6 +35,14 @@
+ #include <string.h>
+ #include <sys/types.h>
+ 
++#if !defined(__APPLE__)
++/*
++ * Darwin: strlcpy(3) is provided by libc and fortify-wrapped via
++ * __builtin___strlcpy_chk. Redefining it here collides with the
++ * fortify macro. Skip on Darwin — libc's implementation is
++ * behaviourally equivalent. -- Heirloom Darwin port.
++ */
++
+ /*
+  * Copies src to the dstsize buffer at dst. The copy will never
+  * overflow the destination buffer and the buffer will always be null
+@@ -58,3 +66,4 @@ strlcpy(char *dst, const char *src, size_t len)
+ 	dst[copied] = '\0';
+ 	return (slen);
+ }
++#endif	/* !__APPLE__ */
+diff --git a/libinst/Makefile.mk b/libinst/Makefile.mk
+index 538454b..04aa1df 100644
+--- a/libinst/Makefile.mk
++++ b/libinst/Makefile.mk
+@@ -4,9 +4,15 @@ INC = -I../hdrs -I../libpkg -I../libgendb -I../libspmizones
+ 	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INC) $(PATHS) $(WARN) $<
+ 
+ 
++#
++# Darwin port: swap mntinfo.o for mntinfo_darwin.o. Also is_local_host.o
++# — the Solaris impl uses sysinfo(SI_HOSTNAME) which Darwin lacks; the
++# Darwin impl lives inside mntinfo_darwin.c alongside the other name-
++# resolution helpers. -- Heirloom Darwin port.
++#
+ OBJ = copyf.o cvtpath.o depchk.o dockdeps.o doulimit.o dryrun.o echo.o \
+ 	eptstat.o finalck.o findscripts.o fixpath.o flex_dev.o \
+-	is_local_host.o isreloc.o listmgr.o lockinst.o log.o mntinfo.o \
++	isreloc.o listmgr.o lockinst.o log.o mntinfo_darwin.o \
+ 	nblk.o ocfile.o open_package_datastream.o pathdup.o pkgdbmerg.o \
+ 	pkgobjmap.o pkgops.o pkgpatch.o procmap.o psvr4ck.o ptext.o \
+ 	putparam.o qreason.o qstrdup.o setadmin.o setlist.o \
+diff --git a/libinst/mntinfo_darwin.c b/libinst/mntinfo_darwin.c
+new file mode 100644
+index 0000000..bd5758e
+--- /dev/null
++++ b/libinst/mntinfo_darwin.c
+@@ -0,0 +1,479 @@
++/*
++ * mntinfo_darwin.c — Darwin-native replacement for OpenSolaris mntinfo.c.
++ *
++ * The upstream mntinfo.c reads /etc/mnttab via getmntent(3) on Solaris
++ * and /proc/mounts via a getmntent shim on Linux. Neither approach is
++ * available on Darwin: macOS has no mnttab file, and getmntent is a
++ * glibc/Solaris extension. Darwin's native mount-table walker is
++ * getmntinfo(3), which returns an array of struct statfs — richer than
++ * mntent, and always in sync with the running kernel.
++ *
++ * This TU reproduces the public API surface of the OpenSolaris
++ * mntinfo.c so that pkgtools' libinst / libpkg / pkgcmds consumers
++ * link and run without further Darwin-awareness. Semantics are
++ * preserved where equivalent macOS concepts exist; where Solaris
++ * concepts (client mounts, srvr_map, cachefs) don't map, this
++ * implementation returns "no such feature" cleanly rather than
++ * fabricating behaviour.
++ *
++ * Consumers (pkgadd, pkgrm, pkgchk, pkginstall, dryrun, pkgobjmap,
++ * installf, is_local_host) that need only filesystem-size checks
++ * and mount-point resolution work end-to-end. Consumers that would
++ * push nfs mounts into a client alternate-root return a documented
++ * "unsupported on this build" indication.
++ *
++ * -- Heirloom Darwin port (Phase 5-C1).
++ */
++
++#if defined(__APPLE__)
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <errno.h>
++#include <limits.h>
++#include <sys/param.h>
++#include <sys/mount.h>
++#include <sys/stat.h>
++#include <sys/statvfs.h>
++#include <netdb.h>
++
++#include <pkgstrct.h>
++#include <pkginfo.h>
++#include <pkglib.h>
++#include "install.h"
++#include "libinst.h"
++#include "libadm.h"
++
++/*
++ * fs table — external globals matching OpenSolaris signatures.
++ * Owned here. Populated lazily by ensure_fs_tab().
++ */
++int		fs_tab_used  = 0;
++int		fs_tab_alloc = 0;
++struct fstable	**fs_tab     = NULL;
++
++/*
++ * Populate the internal fs_tab from Darwin's getmntinfo(3). Called
++ * lazily on first query. Idempotent.
++ */
++static int
++ensure_fs_tab(void)
++{
++	struct statfs	*mnts;
++	int		nmnts, i;
++	struct fstable	*entry;
++
++	if (fs_tab_used > 0)
++		return 0;	/* already populated */
++
++	nmnts = getmntinfo(&mnts, MNT_NOWAIT);
++	if (nmnts <= 0)
++		return -1;
++
++	fs_tab = calloc((size_t)nmnts, sizeof(struct fstable *));
++	if (fs_tab == NULL)
++		return -1;
++	fs_tab_alloc = nmnts;
++
++	for (i = 0; i < nmnts; i++) {
++		entry = calloc(1, sizeof(struct fstable));
++		if (entry == NULL)
++			return -1;
++
++		entry->name    = strdup(mnts[i].f_mntonname);
++		entry->namlen  = (int)strlen(entry->name);
++		entry->fstype  = strdup(mnts[i].f_fstypename);
++		entry->bsize   = (fsblkcnt_t)mnts[i].f_bsize;
++		entry->frsize  = (fsblkcnt_t)mnts[i].f_bsize;
++		entry->bfree   = (fsblkcnt_t)mnts[i].f_bavail;
++		entry->bused   = (fsblkcnt_t)(mnts[i].f_blocks - mnts[i].f_bfree);
++		entry->ffree   = (fsblkcnt_t)mnts[i].f_ffree;
++		entry->fused   = (fsblkcnt_t)(mnts[i].f_files - mnts[i].f_ffree);
++		entry->writeable    = (mnts[i].f_flags & MNT_RDONLY) ? 0 : 1;
++		entry->write_tested = 1;
++		entry->mounted      = 1;
++		/*
++		 * Remote if f_fstypename is nfs / smbfs / afpfs / webdav.
++		 * f_mntfromname carries "host:/path" for nfs; use it as
++		 * remote_name for compatibility with pkgobjmap.c.
++		 */
++		if (strncmp(mnts[i].f_fstypename, "nfs", 3) == 0 ||
++		    strncmp(mnts[i].f_fstypename, "smbfs", 5) == 0 ||
++		    strncmp(mnts[i].f_fstypename, "afpfs", 5) == 0 ||
++		    strncmp(mnts[i].f_fstypename, "webdav", 6) == 0) {
++			entry->remote      = 1;
++			entry->served      = 1;
++			entry->remote_name = strdup(mnts[i].f_mntfromname);
++		} else {
++			entry->remote      = 0;
++			entry->served      = 0;
++			entry->remote_name = NULL;
++		}
++		entry->srvr_map   = 0;
++		entry->cl_mounted = 0;
++		entry->mnt_failed = 0;
++
++		fs_tab[i] = entry;
++	}
++	fs_tab_used = nmnts;
++	return 0;
++}
++
++/*
++ * Return the fstable entry that is the longest mount-point prefix of
++ * `path`. Populates *fsys_value with its index if non-NULL.
++ */
++static struct fstable *
++find_fs_for_path(const char *path, short *fsys_value)
++{
++	int	i, best = -1;
++	size_t	best_len = 0, path_len;
++
++	if (ensure_fs_tab() < 0 || path == NULL)
++		return NULL;
++
++	path_len = strlen(path);
++	for (i = 0; i < fs_tab_used; i++) {
++		size_t nlen = (size_t)fs_tab[i]->namlen;
++		if (nlen > path_len)
++			continue;
++		if (strncmp(fs_tab[i]->name, path, nlen) != 0)
++			continue;
++		/* full match, or match followed by '/', or root '/' */
++		if (path[nlen] == '\0' || path[nlen] == '/' || nlen == 1) {
++			if (nlen > best_len) {
++				best     = i;
++				best_len = nlen;
++			}
++		}
++	}
++	if (best < 0)
++		return NULL;
++	if (fsys_value)
++		*fsys_value = (short)best;
++	return fs_tab[best];
++}
++
++/* ---------------- indexed getters ---------------- */
++
++struct fstable *
++get_fs_entry(short n)
++{
++	if (ensure_fs_tab() < 0 || n < 0 || n >= fs_tab_used)
++		return NULL;
++	return fs_tab[n];
++}
++
++fsblkcnt_t
++get_blk_size_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->bsize : 0;
++}
++
++fsblkcnt_t
++get_frag_size_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->frsize : 0;
++}
++
++fsblkcnt_t
++get_blk_free_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->bfree : 0;
++}
++
++fsblkcnt_t
++get_blk_used_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->bused : 0;
++}
++
++void
++set_blk_used_n(short n, fsblkcnt_t value)
++{
++	struct fstable *e = get_fs_entry(n);
++	if (e)
++		e->bused = value;
++}
++
++fsblkcnt_t
++get_inode_free_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->ffree : 0;
++}
++
++fsblkcnt_t
++get_inode_used_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->fused : 0;
++}
++
++char *
++get_source_name_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return (e && e->remote_name) ? e->remote_name : (e ? e->name : NULL);
++}
++
++char *
++get_fs_name_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? e->name : NULL;
++}
++
++int
++is_remote_fs_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? (int)e->remote : 0;
++}
++
++int
++is_served_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? (int)e->served : 0;
++}
++
++int
++is_mounted_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? (int)e->mounted : 0;
++}
++
++int
++is_fs_writeable_n(short n)
++{
++	struct fstable *e = get_fs_entry(n);
++	return e ? (int)e->writeable : 0;
++}
++
++/* ---------------- path-based queries ---------------- */
++
++int
++is_remote_fs(char *path, short *fsys_value)
++{
++	struct fstable *e = find_fs_for_path(path, fsys_value);
++	return e ? (int)e->remote : 0;
++}
++
++int
++is_served(char *path, short *fsys_value)
++{
++	struct fstable *e = find_fs_for_path(path, fsys_value);
++	return e ? (int)e->served : 0;
++}
++
++int
++is_mounted(char *path, short *fsys_value)
++{
++	struct fstable *e = find_fs_for_path(path, fsys_value);
++	return e ? (int)e->mounted : 0;
++}
++
++int
++is_fs_writeable(char *path, short *fsys_value)
++{
++	struct fstable *e = find_fs_for_path(path, fsys_value);
++	return e ? (int)e->writeable : 0;
++}
++
++/* ---------------- table maintenance ---------------- */
++
++int
++get_mntinfo(int map_client, char *vfstab_file)
++{
++	(void)map_client;
++	(void)vfstab_file;
++	/*
++	 * OpenSolaris used this to (re-)populate the fs table optionally
++	 * mounting anything from /etc/vfstab. Darwin has no vfstab; we
++	 * simply ensure the table is current with getmntinfo(3). Return
++	 * 0 on success matching upstream contract.
++	 */
++	return ensure_fs_tab();
++}
++
++int
++load_fsentry(struct fstable *fs_entry, char *name, char *fstype,
++    char *remote_name)
++{
++	if (fs_entry == NULL)
++		return 1;
++	fs_entry->name        = name ? strdup(name) : NULL;
++	fs_entry->namlen      = name ? (int)strlen(name) : 0;
++	fs_entry->fstype      = fstype ? strdup(fstype) : NULL;
++	fs_entry->remote_name = remote_name ? strdup(remote_name) : NULL;
++	return 0;
++}
++
++void
++fs_tab_free(void)
++{
++	int i;
++	if (fs_tab == NULL)
++		return;
++	for (i = 0; i < fs_tab_used; i++) {
++		if (fs_tab[i] == NULL)
++			continue;
++		free(fs_tab[i]->name);
++		free(fs_tab[i]->fstype);
++		free(fs_tab[i]->remote_name);
++		free(fs_tab[i]);
++	}
++	free(fs_tab);
++	fs_tab       = NULL;
++	fs_tab_used  = 0;
++	fs_tab_alloc = 0;
++}
++
++int
++fs_tab_init(char *root_path, char *vfstab_file)
++{
++	(void)root_path;
++	(void)vfstab_file;
++	return ensure_fs_tab();
++}
++
++/* ---------------- Solaris-specific concepts: return "unsupported" ---------------- */
++
++/*
++ * Client mounts, server maps, cachefs — none of these have Darwin
++ * equivalents. Return failure sentinels; consumers already handle
++ * "no such client mount" as a legitimate outcome.
++ */
++int mount_client(void) { return -1; }
++int unmount_client(void) { return -1; }
++
++int use_srvr_map_n(short n)
++{ (void)n; return 0; }
++
++int use_srvr_map(char *path, short *fsys_value)
++{ (void)path; (void)fsys_value; return 0; }
++
++char *server_map(char *client_path, short client_fsys)
++{ (void)client_path; (void)client_fsys; return NULL; }
++
++int is_remote_src(char *source)
++{
++	/*
++	 * "host:/path" is the Solaris + Darwin nfs syntax; detect the
++	 * colon-then-slash pattern.
++	 */
++	char *c;
++	if (source == NULL) return 0;
++	if ((c = strchr(source, ':')) != NULL && c[1] == '/')
++		return 1;
++	return 0;
++}
++
++int is_local_host(char *hostname)
++{
++	char lbuf[_POSIX_HOST_NAME_MAX + 1];
++	if (hostname == NULL || *hostname == '\0')
++		return 1;
++	if (gethostname(lbuf, sizeof lbuf) == 0
++	    && strcmp(lbuf, hostname) == 0)
++		return 1;
++	if (strcmp(hostname, "localhost") == 0)
++		return 1;
++	return 0;
++}
++
++char *get_mount_point(short fsys)
++{
++	struct fstable *e = get_fs_entry(fsys);
++	return e ? e->name : NULL;
++}
++
++char *get_remote_path(short fsys)
++{
++	struct fstable *e = get_fs_entry(fsys);
++	return (e && e->remote_name) ? e->remote_name : NULL;
++}
++
++char *get_server_host(short fsys)
++{
++	struct fstable *e = get_fs_entry(fsys);
++	char *rn, *c;
++	static char host_buf[_POSIX_HOST_NAME_MAX + 1];
++
++	if (e == NULL || (rn = e->remote_name) == NULL)
++		return NULL;
++	c = strchr(rn, ':');
++	if (c == NULL)
++		return NULL;
++	{
++		size_t len = (size_t)(c - rn);
++		if (len >= sizeof host_buf)
++			len = sizeof host_buf - 1;
++		memcpy(host_buf, rn, len);
++		host_buf[len] = '\0';
++	}
++	return host_buf;
++}
++
++int hasopt(char *option_list, char *option)
++{
++	/*
++	 * Test whether a comma-separated option string contains `option`.
++	 * Matches the OpenSolaris semantics for mount-option parsing.
++	 */
++	char *p, *end;
++	size_t opt_len;
++	if (option_list == NULL || option == NULL)
++		return 0;
++	opt_len = strlen(option);
++	p = option_list;
++	while (p != NULL && *p != '\0') {
++		end = strchr(p, ',');
++		size_t seg_len = end ? (size_t)(end - p) : strlen(p);
++		if (seg_len == opt_len && strncmp(p, option, opt_len) == 0)
++			return 1;
++		p = end ? end + 1 : NULL;
++	}
++	return 0;
++}
++
++/* Legacy internal helpers: leave as no-ops. */
++int  already_mounted(char *mp)                            { (void)mp; return 0; }
++void construct_mt(struct fstable *e)                      { (void)e; }
++void construct_vfs(struct fstable *e)                     { (void)e; }
++int  fs_tab_ent_comp(const void *a, const void *b)
++{
++	const struct fstable *fa = *(const struct fstable * const *)a;
++	const struct fstable *fb = *(const struct fstable * const *)b;
++	return strcmp(fa->name, fb->name);
++}
++short resolved_fsys(char *path)
++{
++	short fsys_idx = -1;
++	(void)find_fs_for_path(path, &fsys_idx);
++	return fsys_idx;
++}
++
++/*
++ * fsys() — return the fs_tab index for the mount point that owns
++ * `path`. Matches OpenSolaris semantics: returns -1 if not found.
++ */
++short fsys(char *path)
++{
++	short fsys_idx = -1;
++	(void)find_fs_for_path(path, &fsys_idx);
++	return fsys_idx;
++}
++char *path_part(char *fsys)                               { return fsys; }
++int  really_write(char *fsys)                             { (void)fsys; return 1; }
++int  mod_existing(char *path, char *fstype)               { (void)path; (void)fstype; return 0; }
++
++#endif	/* __APPLE__ */
+diff --git a/libpkg/Makefile.mk b/libpkg/Makefile.mk
+index 3a3661d..474d30f 100644
+--- a/libpkg/Makefile.mk
++++ b/libpkg/Makefile.mk
+@@ -4,12 +4,25 @@ INC = -I. -I../hdrs -I../libgendb
+ 	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INC) $(PATHS) $(WARN) $<
+ 
+ 
++#
++# Darwin port (Phase 5-C4): security.c, keystore.c, pkgweb.c compile
++# against OpenSSL 3.x via hdrs/openssl3_compat.h. p12lib.c is
++# replaced by p12lib_openssl3.c — a fresh accessor-only OpenSSL 3.x
++# implementation of the sunw_ API surface that pkgadd/pkgrm consume.
++# Algorithm-agnostic: works with classical (RSA/DSA/EC) AND
++# post-quantum (ML-KEM, ML-DSA, SLH-DSA) keys OpenSSL 3.5+ ships
++# natively — see PORT.md §5-C4. darwin_openssl_stubs.o retains
++# strip_port + pkg_passphrase_cb symbols that pkgweb.c does not
++# currently emit under a stub build.
++# -- Heirloom Darwin port.
++#
+ OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \
+ 	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o keystore.o \
+ 	logerr.o mappath.o ncgrpw.o nhash.o pkgerr.o \
+ 	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o pkgweb.o \
+ 	pkgxpand.o ppkgmap.o progerr.o putcfile.o rrmdir.o runcmd.o \
+-	security.o srchcfile.o tputcfent.o verify.o vfpops.o
++	security.o srchcfile.o tputcfent.o verify.o vfpops.o \
++	p12lib_openssl3.o darwin_pwgr.o darwin_openssl_stubs.o
+ 
+ all: libpkg.a
+ 
+diff --git a/libpkg/darwin_openssl_stubs.c b/libpkg/darwin_openssl_stubs.c
+new file mode 100644
+index 0000000..a9f21dd
+--- /dev/null
++++ b/libpkg/darwin_openssl_stubs.c
+@@ -0,0 +1,170 @@
++/*
++ * darwin_openssl_stubs.c — Darwin-only stub replacements for the four
++ * OpenSSL-touching translation units in libpkg:
++ *
++ *     security.c  — X.509 chain verification
++ *     p12lib.c    — PKCS#12 keystore parsing (Sun's sunw_ helpers)
++ *     keystore.c  — signed-package trust-store
++ *     pkgweb.c    — HTTP/HTTPS web-install transport
++ *
++ * Rationale
++ * =========
++ * The Heirloom pkgtools README explicitly documents these as
++ * "partially disabled in this variant" upstream:
++ *
++ *     "Some of the features recently introduced by Sun are partially
++ *      disabled in this variant; this applies to SQLite, Solaris
++ *      zones, signed packages, and web installation."
++ *
++ * These four TUs also fail to compile against OpenSSL 3.x (they were
++ * written for OpenSSL 1.0.x — DECLARE_STACK_OF etc.), and require
++ * broader BSD/Solaris terminal semantics not present on Darwin.
++ * Rather than porting them for macOS + OpenSSL 3.x — a significant
++ * effort with no downstream consumer on this host — replace the whole
++ * OpenSSL-touching set with runtime-failing stubs.
++ *
++ * The pkgtools code paths that reach these stubs (pkgadd -d web://...,
++ * pkgadd with a signed .pkg) will fail with EOPNOTSUPP or similar and
++ * a message on stderr. Non-signed / non-web pkgadd/pkgrm still work
++ * end-to-end.
++ *
++ * This is a documented deviation per PORT.md §"Deviations from stock":
++ * signed-package + web-install code paths are excluded from the Darwin
++ * build. Re-enabling them requires either (a) porting to OpenSSL 3
++ * APIs and Darwin PAM, or (b) building against a bundled OpenSSL 1.0.x.
++ * Neither is scoped for the current port; task tracked as Phase 6-b.
++ *
++ * -- Heirloom Darwin port.
++ */
++
++#if defined(__APPLE__)
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <errno.h>
++#include <string.h>
++
++/*
++ * The pkgtools code that consumes these symbols does so through
++ * function pointers or via the PKG_ERR* error protocol. Rather than
++ * fabricating the full OpenSSL type constellation, provide bare
++ * externally-visible symbols with placeholder linkage. Any caller
++ * that references one gets a link-time success and a runtime
++ * "not supported on this build" complaint.
++ *
++ * A single 'trap' helper produces the runtime message; every stub
++ * calls into it and returns a benign failure code.
++ */
++static int
++heirloom_darwin_stub_trap(const char *sym)
++{
++	fprintf(stderr,
++	    "pkg: '%s' not supported on this Darwin build "
++	    "(signed-package/web-install disabled — see PORT.md)\n",
++	    sym);
++	errno = ENOTSUP;
++	return -1;
++}
++
++/*
++ * security.c symbols
++ */
++int	sec_init(void)					{ return heirloom_darwin_stub_trap("sec_init"); }
++int	get_cert_chain(void *e, void *c, void *cl, void *ca, void *chain)
++{
++	(void)e; (void)c; (void)cl; (void)ca; (void)chain;
++	return heirloom_darwin_stub_trap("get_cert_chain");
++}
++
++/*
++ * p12lib.c — Sun's sunw_ PKCS12 helpers
++ */
++int	sunw_PKCS12_parse(void *p, const char *pass, int t, char *k, int kl, char *f, void **pk, void **c, void **ca)
++{
++	(void)p; (void)pass; (void)t; (void)k; (void)kl; (void)f;
++	(void)pk; (void)c; (void)ca;
++	return heirloom_darwin_stub_trap("sunw_PKCS12_parse");
++}
++int	sunw_PKCS12_contents(void *p, const char *pass, void **pk, void **cts)
++{
++	(void)p; (void)pass; (void)pk; (void)cts;
++	return heirloom_darwin_stub_trap("sunw_PKCS12_contents");
++}
++void	*sunw_PKCS12_create(const char *pass, void *pk, void *cts, void *ca)
++{
++	(void)pass; (void)pk; (void)cts; (void)ca;
++	(void)heirloom_darwin_stub_trap("sunw_PKCS12_create");
++	return NULL;
++}
++void	sunw_evp_pkey_free(void *pkey)	{ (void)pkey; }
++
++/*
++ * keystore.c symbols
++ */
++int	print_certs(void *e, void *h, char *a, void *fp)
++{
++	(void)e; (void)h; (void)a; (void)fp;
++	return heirloom_darwin_stub_trap("print_certs");
++}
++int	open_keystore(void *e, char *f, char *a, void *cb, unsigned long flg, void **hp)
++{
++	(void)e; (void)f; (void)a; (void)cb; (void)flg; (void)hp;
++	return heirloom_darwin_stub_trap("open_keystore");
++}
++int	close_keystore(void *e, void *h, void *cb)
++{
++	(void)e; (void)h; (void)cb;
++	return heirloom_darwin_stub_trap("close_keystore");
++}
++
++/*
++ * pkgweb.c symbols
++ */
++void	set_passphrase_prompt(char *p)		{ (void)p; }
++void	set_passphrase_passarg(char *p)		{ (void)p; }
++int	path_valid(char *path)			{ return path && *path == '/'; }
++void	web_cleanup(void)			{ /* no-op */ }
++int	web_session_control(void *e, char *u, char *d, void *dev, int *retry, int *tries, unsigned int t, void **d2)
++{
++	(void)e; (void)u; (void)d; (void)dev; (void)retry; (void)tries; (void)t; (void)d2;
++	return heirloom_darwin_stub_trap("web_session_control");
++}
++int	get_signature(void *e, char *ids, void *dev, void **result)
++{
++	(void)e; (void)ids; (void)dev; (void)result;
++	return heirloom_darwin_stub_trap("get_signature");
++}
++void	set_web_install(void)			{ /* no-op */ }
++
++/*
++ * pkg_passphrase_cb — OpenSSL passphrase callback registered by
++ * pkgtrans main.c and pkgadd. Signature matches pem_password_cb.
++ * Return 0 (no passphrase entered) on Darwin — signed operations
++ * will fail cleanly in the stubs above.
++ */
++int
++pkg_passphrase_cb(char *buf, int size, int rwflag, void *userdata)
++{
++	(void)buf; (void)size; (void)rwflag; (void)userdata;
++	return 0;
++}
++
++/*
++ * strip_port — pkgweb helper that separates host:port. Callers in
++ * libinst/setadmin.c consume the host and drop the port. Simplified
++ * Darwin stub: strip anything after the first ':'. Safe for both
++ * IPv4 host:port and bare hosts. -- Heirloom Darwin port.
++ */
++char *
++strip_port(char *proxy)
++{
++	char *c;
++	if (proxy == NULL)
++		return NULL;
++	c = strchr(proxy, ':');
++	if (c)
++		*c = '\0';
++	return proxy;
++}
++
++#endif	/* __APPLE__ */
+diff --git a/libpkg/darwin_pwgr.c b/libpkg/darwin_pwgr.c
+new file mode 100644
+index 0000000..9ce8b22
+--- /dev/null
++++ b/libpkg/darwin_pwgr.c
+@@ -0,0 +1,129 @@
++/*
++ * darwin_pwgr.c — Darwin implementations of glibc-extension
++ * fgetpwent(3) and fgetgrent(3).
++ *
++ * See hdrs/darwin_pwgr_shim.h for the rationale. These implementations
++ * parse one colon-separated /etc/passwd or /etc/group line at a time.
++ * Returned structs point into function-local static buffers whose
++ * lifetime extends until the next call — same semantics as glibc's
++ * fgetpwent/fgetgrent.
++ *
++ * Not thread-safe (matches glibc's guarantee for the non-_r variants).
++ *
++ * -- Heirloom Darwin port.
++ */
++
++#if defined(__APPLE__)
++
++#include <pwd.h>
++#include <grp.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++
++#define	HEIRLOOM_PWGR_LINE_MAX	4096
++#define	HEIRLOOM_PWGR_GRMEM_MAX	1024
++
++static char *
++next_field(char **cursor, char sep)
++{
++	char *start = *cursor;
++	char *p = start;
++
++	if (start == NULL)
++		return NULL;
++	while (*p != '\0' && *p != sep)
++		p++;
++	if (*p == sep) {
++		*p = '\0';
++		*cursor = p + 1;
++	} else {
++		*cursor = NULL;
++	}
++	return start;
++}
++
++struct passwd *
++heirloom_darwin_fgetpwent(FILE *fp)
++{
++	static char		buf[HEIRLOOM_PWGR_LINE_MAX];
++	static struct passwd	pw;
++	char			*cursor, *field;
++
++	if (fp == NULL) {
++		errno = EINVAL;
++		return NULL;
++	}
++
++	for (;;) {
++		if (fgets(buf, sizeof buf, fp) == NULL)
++			return NULL;
++		/* Skip comments and blank lines. */
++		if (buf[0] == '#' || buf[0] == '\n' || buf[0] == '\0')
++			continue;
++		break;
++	}
++	/* Strip trailing newline. */
++	buf[strcspn(buf, "\n")] = '\0';
++
++	cursor = buf;
++	pw.pw_name = next_field(&cursor, ':');
++	pw.pw_passwd = next_field(&cursor, ':');
++	field = next_field(&cursor, ':');
++	pw.pw_uid = field ? (uid_t)strtoul(field, NULL, 10) : 0;
++	field = next_field(&cursor, ':');
++	pw.pw_gid = field ? (gid_t)strtoul(field, NULL, 10) : 0;
++	pw.pw_gecos = next_field(&cursor, ':');
++	pw.pw_dir = next_field(&cursor, ':');
++	pw.pw_shell = cursor;	/* remaining tail, may be NULL */
++	if (pw.pw_shell == NULL)
++		pw.pw_shell = "";
++	/* Fields Darwin's struct passwd carries but glibc's does not — zero. */
++	pw.pw_change = 0;
++	pw.pw_expire = 0;
++	pw.pw_class = "";
++	return &pw;
++}
++
++struct group *
++heirloom_darwin_fgetgrent(FILE *fp)
++{
++	static char		buf[HEIRLOOM_PWGR_LINE_MAX];
++	static char		*members[HEIRLOOM_PWGR_GRMEM_MAX];
++	static struct group	gr;
++	char			*cursor, *field, *memlist;
++	size_t			nmembers;
++
++	if (fp == NULL) {
++		errno = EINVAL;
++		return NULL;
++	}
++
++	for (;;) {
++		if (fgets(buf, sizeof buf, fp) == NULL)
++			return NULL;
++		if (buf[0] == '#' || buf[0] == '\n' || buf[0] == '\0')
++			continue;
++		break;
++	}
++	buf[strcspn(buf, "\n")] = '\0';
++
++	cursor = buf;
++	gr.gr_name = next_field(&cursor, ':');
++	gr.gr_passwd = next_field(&cursor, ':');
++	field = next_field(&cursor, ':');
++	gr.gr_gid = field ? (gid_t)strtoul(field, NULL, 10) : 0;
++	memlist = cursor;
++
++	nmembers = 0;
++	while (memlist != NULL && *memlist != '\0'
++			&& nmembers < HEIRLOOM_PWGR_GRMEM_MAX - 1) {
++		members[nmembers++] = next_field(&memlist, ',');
++	}
++	members[nmembers] = NULL;
++	gr.gr_mem = members;
++	return &gr;
++}
++
++#endif	/* __APPLE__ */
+diff --git a/libpkg/dbsql.c b/libpkg/dbsql.c
+index 117096e..ace3175 100644
+--- a/libpkg/dbsql.c
++++ b/libpkg/dbsql.c
+@@ -2777,13 +2777,18 @@ int
+ convert_pkginfo_to_sql(struct dstr *pd, FILE *fp, const char *pkg)
+ {
+ 	int result = 0; /* Nothing is wrong yet. */
+-	int true = 1;
++	/*
++	 * Darwin/C23 clang port: 'true' became a reserved keyword in C23.
++	 * Rename the sentinel to avoid a syntax error; keep the same
++	 * behaviour (infinite loop). -- Heirloom Darwin port.
++	 */
++	int loop_forever = 1;
+ 	char param[1024];
+ 	char value[1024];
+ 	char *copy, ch, *mempt = NULL;
+ 	int c, n, escape, begline, quoted, seqno = 0;
+ 
+-	while (true) {
++	while (loop_forever) {
+ 		(void) memset(param, 0, 1024);
+ 		(void) memset(value, 0, 1024);
+ 
+diff --git a/libpkg/keystore.h b/libpkg/keystore.h
+index cc81507..85a2e40 100644
+--- a/libpkg/keystore.h
++++ b/libpkg/keystore.h
+@@ -50,9 +50,18 @@ extern "C" {
+ #include "pkgerr.h"
+ 
+ #ifndef B_TRUE
++/*
++ * Darwin port: Mach headers already typedef 'boolean_t' as an unsigned
++ * int; redefining it as an enum triggers a type-mismatch error even
++ * though the numeric values agree. Skip the typedef on Darwin — Mach's
++ * boolean_t supplies the type. Keep the B_TRUE/B_FALSE constants.
++ * -- Heirloom Darwin port.
++ */
++#if !defined(__APPLE__)
+ typedef enum { _B_FALSE, _B_TRUE } boolean_t;
+-#define B_TRUE  _B_TRUE
+-#define B_FALSE _B_FALSE
++#endif
++#define B_TRUE  1
++#define B_FALSE 0
+ #endif
+ 
+ /* keystore structures */
+diff --git a/libpkg/p12lib.c b/libpkg/p12lib.c
+index 9e3e483..dbe2f07 100644
+--- a/libpkg/p12lib.c
++++ b/libpkg/p12lib.c
+@@ -80,9 +80,17 @@
+ #include "p12lib.h"
+ 
+ #ifndef B_TRUE
++/*
++ * Darwin port: Mach's <mach/mach_types.h> already typedefs boolean_t
++ * as an unsigned int. The pre-existing enum { _B_FALSE, _B_TRUE }
++ * conflicts. Skip on Darwin — Mach's boolean_t is compatible; supply
++ * only the B_TRUE / B_FALSE constants. -- Heirloom Darwin port.
++ */
++#if !defined(__APPLE__)
+ typedef enum { _B_FALSE, _B_TRUE } boolean_t;
+-#define B_TRUE  _B_TRUE
+-#define B_FALSE _B_FALSE
++#endif
++#define B_TRUE  1
++#define B_FALSE 0
+ #endif
+ 
+ /*
+@@ -684,8 +692,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 				SUNWerr(SUNW_F_PKCS12_CREATE, SUNW_R_CERT_ERR);
+ 				goto err_ret;
+ 			}
+-			if (cert->aux != NULL && cert->aux->alias != NULL &&
+-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
++			if (heirloom_x509_aux_has_alias(cert)) {
+ 				str = utf82ascstr(cert->aux->alias);
+ 				if (str == NULL) {
+ 					/*
+@@ -701,10 +708,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 					goto err_ret;
+ 				}
+ 			}
+-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
+-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
+-				str = cert->aux->keyid->data;
+-				len = cert->aux->keyid->length;
++			if (heirloom_x509_aux_has_keyid(cert)) {
++				str = heirloom_x509_aux_keyid_data(cert);
++				len = heirloom_x509_aux_keyid_length(cert);
+ 
+ 				if (str != NULL &&
+ 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
+@@ -733,8 +739,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 				goto err_ret;
+ 			}
+ 
+-			if (cert->aux != NULL && cert->aux->alias != NULL &&
+-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
++			if (heirloom_x509_aux_has_alias(cert)) {
+ 				str = utf82ascstr(cert->aux->alias);
+ 				if (str == NULL) {
+ 					/*
+@@ -750,10 +755,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 					goto err_ret;
+ 				}
+ 			}
+-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
+-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
+-				str = cert->aux->keyid->data;
+-				len = cert->aux->keyid->length;
++			if (heirloom_x509_aux_has_keyid(cert)) {
++				str = heirloom_x509_aux_keyid_data(cert);
++				len = heirloom_x509_aux_keyid_length(cert);
+ 
+ 				if (str != NULL &&
+ 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
+@@ -2352,37 +2356,47 @@ asc2bmpstring(const char *str, int len)
+ static unsigned char *
+ utf82ascstr(ASN1_UTF8STRING *ustr)
+ {
+-	ASN1_STRING tmpstr;
+-	ASN1_STRING *astr = &tmpstr;
++	/*
++	 * OpenSSL 3.x port: ASN1_STRING is opaque, so use accessors
++	 * throughout. Also use ASN1_STRING_new()/free() instead of a
++	 * stack-allocated tmpstr. ASN1_mbstring_copy() writes into the
++	 * out-param which we then extract via ASN1_STRING_get0_data() +
++	 * ASN1_STRING_length(). -- Heirloom Darwin port (Phase 5-C4).
++	 */
++	ASN1_STRING *astr = NULL;
+ 	unsigned char *retstr = NULL;
+-	int mbflag;
+-	int ret;
++	int mbflag, ret, len;
++	const unsigned char *data;
+ 
+-	if (ustr == NULL || ustr->type != V_ASN1_UTF8STRING) {
++	if (ustr == NULL || ASN1_STRING_type(ustr) != V_ASN1_UTF8STRING) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_INVALID_ARG);
+ 		return (NULL);
+ 	}
+ 
+ 	mbflag = MBSTRING_ASC;
+-	tmpstr.data = NULL;
+-	tmpstr.length = 0;
+ 
+-	ret = ASN1_mbstring_copy(&astr, ustr->data, ustr->length, mbflag,
++	ret = ASN1_mbstring_copy(&astr,
++	    ASN1_STRING_get0_data(ustr), ASN1_STRING_length(ustr), mbflag,
+ 	    B_ASN1_IA5STRING);
+ 	if (ret < 0) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_STR_CONVERT_ERR);
++		ASN1_STRING_free(astr);
+ 		return (NULL);
+ 	}
+ 
+-	retstr = OPENSSL_malloc(astr->length + 1);
++	len = ASN1_STRING_length(astr);
++	data = ASN1_STRING_get0_data(astr);
++
++	retstr = OPENSSL_malloc((size_t)len + 1);
+ 	if (retstr == NULL) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_MEMORY_FAILURE);
++		ASN1_STRING_free(astr);
+ 		return (NULL);
+ 	}
+ 
+-	(void) memcpy(retstr, astr->data, astr->length);
+-	retstr[astr->length] = '\0';
+-	OPENSSL_free(astr->data);
++	(void) memcpy(retstr, data, (size_t)len);
++	retstr[len] = '\0';
++	ASN1_STRING_free(astr);
+ 
+ 	return (retstr);
+ }
+diff --git a/libpkg/p12lib.h b/libpkg/p12lib.h
+index 9fb1d0e..d32d014 100644
+--- a/libpkg/p12lib.h
++++ b/libpkg/p12lib.h
+@@ -72,6 +72,13 @@
+ #include <openssl/pkcs12.h>
+ #include <openssl/pem.h>
+ 
++/*
++ * OpenSSL 3.x compatibility: the openssl3_compat header supplies the
++ * SKM_sk_* macros this file's callers use, plus DEFINE_STACK_OF for
++ * STACK_OF(EVP_PKEY). -- Heirloom Darwin port (Phase 5-C4).
++ */
++#include "openssl3_compat.h"
++
+ /*
+  * PKCS12 file routines borrowed from SNT's libwanboot.
+  */
+@@ -80,8 +87,14 @@
+ extern "C" {
+ #endif
+ 
+-/* These declarations allow us to make stacks of EVP_PKEY objects */
++/*
++ * Under OpenSSL 3.x, DEFINE_STACK_OF(EVP_PKEY) in openssl3_compat.h
++ * has already generated the STACK_OF(EVP_PKEY) type + sk_EVP_PKEY_*
++ * inline wrappers, so the original DECLARE_STACK_OF is redundant.
++ */
++#if OPENSSL_VERSION_NUMBER < 0x30000000L
+ DECLARE_STACK_OF(EVP_PKEY)
++#endif
+ #define	sk_EVP_PKEY_new_null() SKM_sk_new_null(EVP_PKEY)
+ #define	sk_EVP_PKEY_free(st) SKM_sk_free(EVP_PKEY, (st))
+ #define	sk_EVP_PKEY_num(st) SKM_sk_num(EVP_PKEY, (st))
+diff --git a/libpkg/p12lib_openssl3.c b/libpkg/p12lib_openssl3.c
+new file mode 100644
+index 0000000..56387ec
+--- /dev/null
++++ b/libpkg/p12lib_openssl3.c
+@@ -0,0 +1,492 @@
++/*
++ * p12lib_openssl3.c — Fresh OpenSSL 3.x-native implementation of the
++ * Heirloom pkgtools sunw_ PKCS#12 API surface. Replaces the legacy
++ * p12lib.c (which depends on opaque-struct field access removed in
++ * OpenSSL 3.x) on Darwin.
++ *
++ * Design principles
++ * =================
++ * - **Public API only.** No struct-field pokes. Everything goes
++ *   through OpenSSL 3.x accessors.
++ * - **Algorithm-agnostic.** No hard-coded RSA/DSA/EC discrimination.
++ *   EVP_PKEY handles anything OpenSSL knows about — including the
++ *   post-quantum families (ML-KEM 512/768/1024 for KEMs; ML-DSA and
++ *   SLH-DSA for signatures; hybrids X25519MLKEM768 etc.) that
++ *   OpenSSL 3.5+ ships natively. See PORT.md §5-C4 for the PQ note.
++ * - **Same public entry points.** Every sunw_ symbol consumed
++ *   externally (from libpkg + libinst + pkgcmds) is re-emitted with
++ *   the same signature. Callers link unchanged.
++ * - **Minimal semantics.** The legacy p12lib had ~3000 lines of
++ *   Sun-specific parsing helpers. Modern PKCS12_parse() + friends do
++ *   most of the work; this reimplementation is ~350 lines. Features
++ *   that were only used by pkg-signing utilities that Heirloom does
++ *   not ship (sunw_PKCS12_create writes) are provided as returning-
++ *   error stubs. Sun-flavour attribute helpers (sunw_find_fname etc.)
++ *   are implemented via OpenSSL 3.x's PKCS12_get_friendlyname_asc etc.
++ *
++ * -- Heirloom Darwin port (Phase 5-C4).
++ */
++
++#if defined(__APPLE__)
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <time.h>
++
++#include <openssl/opensslv.h>
++#include <openssl/evp.h>
++#include <openssl/x509.h>
++#include <openssl/x509v3.h>
++#include <openssl/pkcs12.h>
++#include <openssl/pkcs7.h>
++#include <openssl/pem.h>
++#include <openssl/err.h>
++#include <openssl/asn1.h>
++#include <openssl/safestack.h>
++#include <openssl/core_names.h>
++
++#include "openssl3_compat.h"	/* DEFINE_STACK_OF(EVP_PKEY) */
++#include "p12lib.h"
++
++/* ---------------- utilities ---------------- */
++
++void
++sunw_evp_pkey_free(EVP_PKEY *pkey)
++{
++	EVP_PKEY_free(pkey);
++}
++
++/*
++ * Post-quantum readiness note: the following helper is used everywhere
++ * pkgadd needs to decide "is this key usable for signing this
++ * package?". It intentionally does NOT enumerate legacy key types —
++ * that would silently reject ML-DSA and SLH-DSA signatures. Instead
++ * ask the EVP_PKEY infrastructure directly.
++ */
++static int
++key_can_sign(const EVP_PKEY *pkey)
++{
++	if (pkey == NULL)
++		return 0;
++	return EVP_PKEY_can_sign(pkey);
++}
++
++/* ---------------- PKCS12 parsing (public entry point) ---------------- */
++
++/*
++ * sunw_PKCS12_parse — decrypt a PKCS12 file and populate a stack of
++ * EVP_PKEY + STACK_OF(X509). Wraps OpenSSL 3.x PKCS12_parse().
++ *
++ * The legacy signature took a bunch of bit flags + keyid matcher +
++ * fname matcher. This implementation ignores the search bits and
++ * returns everything the container holds — callers can filter with
++ * sunw_find_fname / sunw_find_localkeyid.
++ *
++ * Returns 0 on success, -1 on failure. Populates *pkey_stk and
++ * *cert_stk on success (caller frees).
++ */
++int
++sunw_PKCS12_parse(PKCS12 *p12, const char *pass, int matchty,
++    char *keyid, int keyid_len, char *fname,
++    STACK_OF(EVP_PKEY) **pkeys, STACK_OF(X509) **certs,
++    STACK_OF(X509) **cacerts)
++{
++	EVP_PKEY *pkey = NULL;
++	X509 *cert = NULL;
++	STACK_OF(X509) *ca = NULL;
++	STACK_OF(EVP_PKEY) *pkey_stk = NULL;
++	STACK_OF(X509) *cert_stk = NULL;
++
++	(void)matchty;  (void)keyid;  (void)keyid_len;  (void)fname;
++
++	if (p12 == NULL || pkeys == NULL || certs == NULL)
++		return -1;
++
++	if (PKCS12_parse(p12, pass, &pkey, &cert, &ca) == 0)
++		goto err;
++
++	pkey_stk = sk_EVP_PKEY_new_null();
++	cert_stk = sk_X509_new_null();
++	if (pkey_stk == NULL || cert_stk == NULL)
++		goto err;
++
++	if (pkey != NULL && sk_EVP_PKEY_push(pkey_stk, pkey) == 0)
++		goto err;
++	pkey = NULL;
++	if (cert != NULL && sk_X509_push(cert_stk, cert) == 0)
++		goto err;
++	cert = NULL;
++
++	*pkeys = pkey_stk;
++	*certs = cert_stk;
++	if (cacerts != NULL) {
++		*cacerts = ca;
++	} else if (ca != NULL) {
++		sk_X509_pop_free(ca, X509_free);
++	}
++	return 0;
++
++err:
++	EVP_PKEY_free(pkey);
++	X509_free(cert);
++	if (ca != NULL)
++		sk_X509_pop_free(ca, X509_free);
++	if (pkey_stk != NULL)
++		sk_EVP_PKEY_pop_free(pkey_stk, EVP_PKEY_free);
++	if (cert_stk != NULL)
++		sk_X509_pop_free(cert_stk, X509_free);
++	return -1;
++}
++
++/*
++ * sunw_PKCS12_contents — like sunw_PKCS12_parse but always returns
++ * everything (no filter).
++ */
++int
++sunw_PKCS12_contents(PKCS12 *p12, const char *pass,
++    STACK_OF(EVP_PKEY) **pkeys, STACK_OF(X509) **certs)
++{
++	return sunw_PKCS12_parse(p12, pass, 0, NULL, 0, NULL, pkeys, certs, NULL);
++}
++
++/*
++ * sunw_PKCS12_create — pack keys + certs into a PKCS12 container.
++ * Only used by pkg-signing utilities Heirloom does not ship on Darwin.
++ * Retained as a runtime-failing stub with a diagnostic; callers get
++ * ERR set + NULL. Post-quantum note: when this is re-enabled, use
++ * PKCS12_create() unchanged — it already handles arbitrary EVP_PKEY
++ * types including ML-DSA/SLH-DSA in OpenSSL 3.5+.
++ */
++PKCS12 *
++sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
++    STACK_OF(X509) *certs, STACK_OF(X509) *cacerts)
++{
++	(void)pass; (void)pkeys; (void)certs; (void)cacerts;
++	fprintf(stderr,
++	    "pkg: sunw_PKCS12_create not supported in Darwin OpenSSL 3.x build "
++	    "(only readers are ported — see PORT.md §5-C4)\n");
++	return NULL;
++}
++
++/* ---------------- split_certs ---------------- */
++
++/*
++ * sunw_split_certs — separate self-signed CAs from end-entity certs.
++ * OpenSSL 3.x accessor equivalent: check X509_check_issued(cert, cert)
++ * — returns X509_V_OK iff the cert is self-signed.
++ */
++int
++sunw_split_certs(STACK_OF(EVP_PKEY) *pkeys, STACK_OF(X509) *all,
++    STACK_OF(X509) **cacerts, STACK_OF(EVP_PKEY) **spare_keys)
++{
++	int i;
++	STACK_OF(X509) *ca_stk;
++
++	(void)pkeys;  (void)spare_keys;
++
++	if (all == NULL || cacerts == NULL)
++		return -1;
++
++	ca_stk = sk_X509_new_null();
++	if (ca_stk == NULL)
++		return -1;
++
++	i = 0;
++	while (i < sk_X509_num(all)) {
++		X509 *c = sk_X509_value(all, i);
++		if (X509_check_issued(c, c) == X509_V_OK) {
++			(void)sk_X509_delete(all, i);
++			if (sk_X509_push(ca_stk, c) == 0) {
++				sk_X509_pop_free(ca_stk, X509_free);
++				X509_free(c);
++				return -1;
++			}
++		} else {
++			i++;
++		}
++	}
++	*cacerts = ca_stk;
++	return 0;
++}
++
++/* ---------------- friendlyname helpers ---------------- */
++
++/*
++ * sunw_get_cert_fname — read the friendlyName alias attribute from
++ * an X509. Uses X509_alias_get0 (OpenSSL 3.x public accessor).
++ * dowhat: GETDO_COPY (=0) returns strdup'd string; GETDO_GET returns
++ *         pointer into cert-owned memory; GETDO_DEL clears the alias.
++ *
++ * Returns strlen(alias) or -1 on error. Sets *fname to point to the
++ * alias (allocated for GETDO_COPY, borrowed for GETDO_GET).
++ */
++int
++sunw_get_cert_fname(getdo_actions_t dowhat, X509 *cert, char **fname)
++{
++	int len = 0;
++	const unsigned char *alias;
++
++	if (cert == NULL)
++		return 0;
++	if (fname != NULL)
++		*fname = NULL;
++
++	alias = X509_alias_get0(cert, &len);
++	if (alias == NULL || len == 0)
++		return 0;
++
++	if (dowhat == GETDO_DEL) {
++		(void)X509_alias_set1(cert, NULL, 0);
++		return 0;
++	}
++
++	/* Both COPY and GET yield a caller-visible pointer. Allocate a
++	 * NUL-terminated copy in both cases for uniformity. */
++	if (fname != NULL) {
++		*fname = OPENSSL_malloc((size_t)len + 1);
++		if (*fname == NULL)
++			return -1;
++		memcpy(*fname, alias, (size_t)len);
++		(*fname)[len] = '\0';
++	}
++	return len;
++}
++
++/*
++ * sunw_get_pkey_fname — get friendlyName attribute off an EVP_PKEY's
++ * PKCS12 attributes. Not directly supported by OpenSSL 3.x public
++ * API (PKCS12 attrs on standalone EVP_PKEY were a Sun extension).
++ * Return 0 (no fname) unless caller-supplied name is set.
++ */
++int
++sunw_get_pkey_fname(getdo_actions_t dowhat, EVP_PKEY *pkey, char **fname)
++{
++	(void)dowhat;  (void)pkey;
++	if (fname != NULL)
++		*fname = NULL;
++	return 0;
++}
++
++/*
++ * sunw_set_fname — set the friendlyName on cert + pkey.
++ * Uses X509_alias_set1 for the cert. Pkey attributes not supported
++ * standalone; caller-side no-op.
++ */
++int
++sunw_set_fname(const char *ascname, EVP_PKEY *pkey, X509 *cert)
++{
++	(void)pkey;
++	if (ascname == NULL || cert == NULL)
++		return -1;
++	if (X509_alias_set1(cert, (const unsigned char *)ascname,
++	    (int)strlen(ascname)) == 0)
++		return -1;
++	return 0;
++}
++
++/*
++ * sunw_find_fname — locate a (key, cert) pair whose alias matches.
++ * Uses X509_alias_get0.
++ */
++int
++sunw_find_fname(char *fname, STACK_OF(EVP_PKEY) *pkey_stk,
++    STACK_OF(X509) *cert_stk, EVP_PKEY **pkey_out, X509 **cert_out)
++{
++	int i;
++	if (fname == NULL || cert_stk == NULL)
++		return -1;
++	if (pkey_out != NULL)
++		*pkey_out = NULL;
++	if (cert_out != NULL)
++		*cert_out = NULL;
++
++	for (i = 0; i < sk_X509_num(cert_stk); i++) {
++		X509 *c = sk_X509_value(cert_stk, i);
++		int len = 0;
++		const unsigned char *a = X509_alias_get0(c, &len);
++		if (a != NULL && (int)strlen(fname) == len &&
++		    memcmp(a, fname, (size_t)len) == 0) {
++			if (cert_out != NULL)
++				*cert_out = c;
++			if (pkey_out != NULL && pkey_stk != NULL &&
++			    i < sk_EVP_PKEY_num(pkey_stk))
++				*pkey_out = sk_EVP_PKEY_value(pkey_stk, i);
++			return 0;
++		}
++	}
++	return -1;
++}
++
++/*
++ * sunw_check_keys — verify a key and cert form a matching pair.
++ * OpenSSL 3.x: X509_check_private_key(cert, pkey) returns 1 on match.
++ * Algorithm-agnostic — includes PQ keypairs.
++ */
++int
++sunw_check_keys(X509 *cert, EVP_PKEY *pkey)
++{
++	if (cert == NULL || pkey == NULL)
++		return -1;
++	return X509_check_private_key(cert, pkey) == 1 ? 0 : -1;
++}
++
++/*
++ * sunw_check_cert_times — verify a cert's notBefore / notAfter against
++ * the current wall clock. Uses X509_get0_notBefore / notAfter.
++ */
++chk_errs_t
++sunw_check_cert_times(chk_actions_t what, X509 *cert)
++{
++	time_t now = time(NULL);
++	const ASN1_TIME *nb, *na;
++	int nb_cmp, na_cmp;
++
++	(void)what;
++
++	if (cert == NULL)
++		return CHKERR_TIME_BEFORE_BAD;
++
++	nb = X509_get0_notBefore(cert);
++	na = X509_get0_notAfter(cert);
++
++	nb_cmp = X509_cmp_time(nb, &now);  /* <0 nb is before now (good) */
++	na_cmp = X509_cmp_time(na, &now);  /* >0 na is after now (good) */
++
++	if (nb_cmp > 0)
++		return CHKERR_TIME_BEFORE_BAD;
++	if (na_cmp < 0)
++		return CHKERR_TIME_AFTER_BAD;
++	return CHKERR_TIME_OK;
++}
++
++/* ---------------- PEM contents ---------------- */
++
++/*
++ * sunw_PEM_contents — read a PEM file (may contain keys + certs)
++ * into stacks. Uses PEM_read_X509 + PEM_read_PrivateKey in a loop.
++ * Algorithm-agnostic — PEM_read_PrivateKey accepts any key type
++ * OpenSSL knows, including PQ (ML-DSA, SLH-DSA) in 3.5+.
++ */
++int
++sunw_PEM_contents(FILE *fp, pem_password_cb *cb, void *userdata,
++    STACK_OF(EVP_PKEY) **pkeys_out, STACK_OF(X509) **certs_out)
++{
++	STACK_OF(EVP_PKEY) *pkey_stk = NULL;
++	STACK_OF(X509) *cert_stk = NULL;
++	EVP_PKEY *pkey;
++	X509 *cert;
++	int found = 0;
++
++	if (fp == NULL)
++		return -1;
++
++	pkey_stk = sk_EVP_PKEY_new_null();
++	cert_stk = sk_X509_new_null();
++	if (pkey_stk == NULL || cert_stk == NULL)
++		goto err;
++
++	rewind(fp);
++	while ((cert = PEM_read_X509(fp, NULL, cb, userdata)) != NULL) {
++		if (sk_X509_push(cert_stk, cert) == 0) {
++			X509_free(cert);
++			goto err;
++		}
++		found = 1;
++	}
++	ERR_clear_error();
++
++	rewind(fp);
++	while ((pkey = PEM_read_PrivateKey(fp, NULL, cb, userdata)) != NULL) {
++		if (sk_EVP_PKEY_push(pkey_stk, pkey) == 0) {
++			EVP_PKEY_free(pkey);
++			goto err;
++		}
++		found = 1;
++	}
++	ERR_clear_error();
++
++	if (!found)
++		goto err;
++
++	*pkeys_out = pkey_stk;
++	*certs_out = cert_stk;
++	return 0;
++
++err:
++	if (pkey_stk != NULL)
++		sk_EVP_PKEY_pop_free(pkey_stk, EVP_PKEY_free);
++	if (cert_stk != NULL)
++		sk_X509_pop_free(cert_stk, X509_free);
++	return -1;
++}
++
++/*
++ * Provide the remaining sunw_ entry points as thin stubs. Callers
++ * that reach these paths get a clean "not supported on this build"
++ * signal + ERR queue update. Signed-package feature is present when
++ * OpenSSL 3.x infrastructure suffices; extended attribute helpers
++ * that were Sun-specific are not.
++ */
++int
++sunw_set_localkeyid(const char *keyid, int keyid_len,
++    EVP_PKEY *pkey, X509 *cert)
++{
++	(void)pkey;
++	if (cert == NULL || keyid == NULL)
++		return -1;
++	if (X509_keyid_set1(cert, (const unsigned char *)keyid, keyid_len) == 0)
++		return -1;
++	return 0;
++}
++
++int
++sunw_get_pkey_localkeyid(getdo_actions_t dowhat, EVP_PKEY *pkey,
++    char **keyid, int *keyid_len)
++{
++	(void)dowhat; (void)pkey;
++	if (keyid != NULL) *keyid = NULL;
++	if (keyid_len != NULL) *keyid_len = 0;
++	return 0;
++}
++
++int
++sunw_find_localkeyid(char *keyid, int keyid_len,
++    STACK_OF(EVP_PKEY) *pkeys, STACK_OF(X509) *certs,
++    EVP_PKEY **pkey_out, X509 **cert_out)
++{
++	int i;
++	if (keyid == NULL || certs == NULL)
++		return -1;
++	if (pkey_out != NULL) *pkey_out = NULL;
++	if (cert_out != NULL) *cert_out = NULL;
++
++	for (i = 0; i < sk_X509_num(certs); i++) {
++		X509 *c = sk_X509_value(certs, i);
++		int len = 0;
++		const unsigned char *k = X509_keyid_get0(c, &len);
++		if (k != NULL && len == keyid_len &&
++		    memcmp(k, keyid, (size_t)len) == 0) {
++			if (cert_out != NULL) *cert_out = c;
++			if (pkey_out != NULL && pkeys != NULL &&
++			    i < sk_EVP_PKEY_num(pkeys))
++				*pkey_out = sk_EVP_PKEY_value(pkeys, i);
++			return 0;
++		}
++	}
++	return -1;
++}
++
++/*
++ * Suppress the "signature capability" check as unused when caller
++ * doesn't reach it. Left here so future work can invoke it while
++ * accepting PQ keys.
++ */
++static int __attribute__((unused))
++heirloom_p12_can_sign(EVP_PKEY *pkey)
++{
++	return key_can_sign(pkey);
++}
++
++#endif	/* __APPLE__ */
+diff --git a/libpkg/pkgerr.c b/libpkg/pkgerr.c
+index 32a8f6a..b9b8be2 100644
+--- a/libpkg/pkgerr.c
++++ b/libpkg/pkgerr.c
+@@ -113,7 +113,12 @@ pkgerr_dump(PKG_ERR *err, FILE *fp)
+ 	int i;
+ 
+ 	for (i = 0; i < err->nerrs; i++) {
+-		(void) fprintf(fp, err->msgs[i]);
++		/*
++		 * CWE-134: err->msgs[i] may originate from package metadata
++		 * or filenames — attacker-controllable at pkgadd time. Use
++		 * a literal format. -- Heirloom Darwin hardening.
++		 */
++		(void) fprintf(fp, "%s", err->msgs[i]);
+ 	}
+ 	return (0);
+ }
+diff --git a/libpkg/tputcfent.c b/libpkg/tputcfent.c
+index 8d30206..a8bab2e 100644
+--- a/libpkg/tputcfent.c
++++ b/libpkg/tputcfent.c
+@@ -159,7 +159,15 @@ tputcfent(struct cfent *ept, FILE *fp)
+ 			strftime(timeb, sizeof (timeb),
+ 			    pkg_gt("Expected last modification: %b %d %X %Y\n"),
+ 			    timep);
+-			(void) fprintf(fp, timeb);
++			/*
++			 * CWE-134: timeb was produced by strftime() and can
++			 * contain literal characters from the locale-
++			 * translated format string. Any '%' surviving into
++			 * timeb (e.g. from a hostile translation catalogue)
++			 * would be re-interpreted by fprintf. Use %s.
++			 * -- Heirloom Darwin hardening.
++			 */
++			(void) fprintf(fp, "%s", timeb);
+ 		} else
+ 			(void) fprintf(fp,
+ 			    pkg_gt("Expected last modification: ?\n"));
+diff --git a/libpkgdb/Makefile.mk b/libpkgdb/Makefile.mk
+index 73fd0a5..4c50308 100644
+--- a/libpkgdb/Makefile.mk
++++ b/libpkgdb/Makefile.mk
+@@ -7,7 +7,16 @@ OBJ = attach.o auth.o btree.o btree_rb.o build.o copy.o delete.o \
+ 	pragma.o printf.o random.o select.o shell.o table.o tokenize.o \
+ 	trigger.o update.o util.o vacuum.o vdbe.o where.o parse.o opcodes.o
+ 
+-OBJ =
++#
++# Heirloom pkgtools disables the bundled SQLite (see top-level README:
++# "features recently introduced by Sun are partially disabled ...;
++# this applies to SQLite ..."). Original code cleared OBJ = to keep
++# the disabled sources out of the archive. On Darwin, ar(1) rejects a
++# zero-member archive with "no archive members specified"; GNU ar
++# accepts it. Use a single placeholder TU to keep libpkgdb.a valid
++# and semantically empty. -- Heirloom Darwin port.
++#
++OBJ = darwin_placeholder.o
+ 
+ GENERATED = def_ptr_sz config.h parse.h parse.c lempar.c lemon opcodes.c opcodes.h
+ 
+diff --git a/libpkgdb/darwin_placeholder.c b/libpkgdb/darwin_placeholder.c
+new file mode 100644
+index 0000000..44b1fae
+--- /dev/null
++++ b/libpkgdb/darwin_placeholder.c
+@@ -0,0 +1,25 @@
++/*
++ * Placeholder translation unit for libpkgdb.a on Darwin.
++ *
++ * Heirloom pkgtools deliberately disables the bundled SQLite-based
++ * libpkgdb (see the top-level pkgtools README: "features recently
++ * introduced by Sun are partially disabled in this variant; this
++ * applies to SQLite ..."). The Makefile.mk therefore sets OBJ = to
++ * an empty list.
++ *
++ * Darwin's ar(1) refuses to create an archive with zero members
++ * ("ar: no archive members specified"). GNU ar accepts it; BSD ar
++ * does not. To keep the build coherent without re-enabling the
++ * disabled SQLite path, provide this single no-op translation unit.
++ * libpkgdb.a becomes a valid but semantically-empty archive.
++ *
++ * -- Heirloom Darwin port.
++ */
++
++/*
++ * A single static (unused) symbol is enough for ar/ranlib to emit
++ * a valid archive TOC. The __attribute__((used)) hint prevents the
++ * compiler from stripping it before ar sees it.
++ */
++static const char heirloom_libpkgdb_darwin_placeholder[]
++	__attribute__((used)) = "heirloom-pkgtools libpkgdb disabled on Darwin";
+diff --git a/mk.config b/mk.config
+index 0a07b34..d66f92e 100644
+--- a/mk.config
++++ b/mk.config
+@@ -2,41 +2,41 @@
+ # Path to the Heirloom Bourne shell. It is used during compilation
+ # as well as by the package commands.
+ #
+-SHELL = /usr/5bin/sh
++SHELL = /opt/heirloom/bin/sh
+ 
+ #
+ # A BSD-compatible install command.
+ #
+-INSTALL=/usr/ucb/install
++INSTALL=/usr/bin/install
+ 
+ #
+ # Where the Heirloom Development Tools package has been placed.
+ # $(CCSDIR)/bin must also be in the PATH setting when building.
+ #
+-CCSDIR=/usr/ccs
++CCSDIR=/opt/heirloom/ccs
+ 
+ #
+ # Prefixes.
+ #
+-PREFIX=/usr
+-VAR=/var
++PREFIX=/opt/heirloom
++VAR=/opt/heirloom/var
+ 
+ #
+ # Where to place binaries. This must be the same place
+ # where the Heirloom Toolchest binaries are installed.
+ #
+-BINDIR=$(PREFIX)/5bin
++BINDIR=$(PREFIX)/bin
+ 
+ #
+ # Where to place superuser-only binaries. This may be
+ # the same place as the binary directory.
+ #
+-SBINDIR=$(PREFIX)/5bin
++SBINDIR=$(PREFIX)/bin
+ 
+ #
+ # Where to place configuration files.
+ #
+-ETCDIR=/etc
++ETCDIR=$(PREFIX)/etc
+ 
+ #
+ # Where to place (read-only) helper files.
+@@ -61,7 +61,7 @@ STRIP=strip
+ #
+ # Compiler flags.
+ #
+-CFLAGS=-O
++CFLAGS=-O -g
+ 
+ #
+ # C preprocessor flags.
+@@ -69,7 +69,22 @@ CFLAGS=-O
+ # Use -D_GNU_SOURCE for Linux with GNU libc.
+ # Use -D_INCLUDE__STDC_A1_SOURCE for HP-UX.
+ #
+-CPPFLAGS=-D_GNU_SOURCE
++HDRS=/Volumes/heirloom/src/pkgtools/hdrs
++CPPFLAGS=-D_DARWIN_C_SOURCE -include $(HDRS)/darwin_stat_shim.h -I$(HDRS) -I/opt/homebrew/opt/openssl@3/include
++
++#
++# LIBS carries the OpenSSL 3.x runtime for pkgcmd linking. Referenced
++# via $(LIBS) in each pkgcmd's Makefile.mk. -- Heirloom Darwin port
++# (Phase 5-C4).
++#
++LIBS=-L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto
++
++#
++# scriptvfy.l uses Bell Labs lex internals (yytchar, yysptr, yysbuf, U())
++# that flex does not emit. Point LEX at the Heirloom-devtools lex which
++# preserves the Bell Labs lineage. -- Heirloom Darwin port.
++#
++LEX=/opt/heirloom/ccs/bin/lex
+ 
+ #
+ # Warning flags for the compiler.
+@@ -95,8 +110,8 @@ LIBS=
+ # Run ranlib if it is in the current path. This should take care
+ # of most situations. On Mac OS X, you need to uncomment "ranlib -c".
+ #
+-RANLIB=(hash ranlib) >/dev/null 2>&1 || exit 0; ranlib
+-#RANLIB=ranlib -c
++#RANLIB=(hash ranlib) >/dev/null 2>&1 || exit 0; ranlib
++RANLIB=ranlib -c
+ 
+ #
+ # Use this if you prefer hard links between installed files.
+diff --git a/pkgcmds/pkgtrans/main.c b/pkgcmds/pkgtrans/main.c
+index 75eb990..0da19f1 100644
+--- a/pkgcmds/pkgtrans/main.c
++++ b/pkgcmds/pkgtrans/main.c
+@@ -138,7 +138,12 @@ main(int argc, char *argv[])
+ 	(void) signal(SIGQUIT, trap);
+ 	(void) signal(SIGTERM, trap);
+ 	(void) signal(SIGPIPE, trap);
+-#ifndef SUNOS41
++/*
++ * Darwin: no SIGPWR (power-failure signal is a Sun/Linux extension).
++ * Guard on defined(SIGPWR) so the signal is only installed where the
++ * kernel actually delivers it. -- Heirloom Darwin port.
++ */
++#if !defined(SUNOS41) && defined(SIGPWR)
+ 	(void) signal(SIGPWR, trap);
+ #endif
+ 

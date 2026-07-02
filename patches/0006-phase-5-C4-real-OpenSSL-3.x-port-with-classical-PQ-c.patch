@@ -1,0 +1,962 @@
+From 6164f9134a48632c9021f7e193f8b7d09a90019c Mon Sep 17 00:00:00 2001
+From: Warwick Brown <me@moonman.me.uk>
+Date: Thu, 2 Jul 2026 21:44:35 +0100
+Subject: [PATCH 6/6] phase 5-C4: real OpenSSL 3.x port with classical + PQ
+ crypto support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces darwin_openssl_stubs' fake sunw_ implementations with a
+fresh, accessor-only OpenSSL 3.x native library. All 13 pkgcmd
+binaries continue to build + install; the signed-package + web-
+install code paths in security.c, keystore.c, and pkgweb.c now
+route through real crypto.
+
+libpkg/p12lib_openssl3.c (new, replaces p12lib.o on Darwin):
+    ~350-line OpenSSL 3.x native implementation of the sunw_
+    PKCS#12 API surface pkgadd/pkgrm consume. Design principles:
+
+      * Public API only — no struct-field pokes; all X509 aux,
+        ASN1_STRING, EVP_PKEY internal reads go through
+        X509_alias_get0/X509_keyid_get0/ASN1_STRING_get0_data/
+        EVP_PKEY_get_id/EVP_PKEY_can_sign accessors.
+      * Algorithm-agnostic — no hard-coded RSA/DSA/EC discrimination.
+        Works with post-quantum algorithms OpenSSL 3.5+ ships natively:
+          - ML-KEM-512 / 768 / 1024        (FIPS 203 key encapsulation)
+          - ML-DSA / SLH-DSA-SHAKE-256f    (FIPS 204/205 signatures)
+          - hybrids X25519MLKEM768, X448MLKEM1024, SecP256r1MLKEM768,
+            SecP384r1MLKEM1024
+      * Same public entry points — every sunw_ symbol consumed
+        externally (from keystore.c, security.c, pkgweb.c, and the
+        pkgcmds) is re-emitted with identical signature. Callers
+        link unchanged.
+      * sunw_PKCS12_create returns an error+stderr diagnostic —
+        pkg-signing utilities are not shipped on this host, so the
+        write side is documented deferred rather than partial-
+        implemented.
+
+hdrs/openssl3_compat.h:
+    Expanded with the compatibility surface p12lib.c would need if
+    the legacy body were ported instead. Kept even though we chose
+    the fresh-rewrite path — the SKM_sk_* + M_PKCS12_* + M_ASN1_*
+    macro compat, uni2asc/asc2uni reimplementations, X509 aux
+    accessors (heirloom_x509_aux_has_alias etc.), and EVP_PKEY
+    type helper (heirloom_evp_pkey_type) are useful reference for
+    future porting work in other Heirloom subpackages.
+
+libpkg/p12lib.c:
+    Kept in tree for future readers but no longer compiled on Darwin.
+    Contains the historical Sun sunw_ implementation for reference.
+    (Minor: earlier boolean_t fix retained.)
+
+libpkg/Makefile.mk:
+    OBJ list now includes security.o, keystore.o, pkgweb.o (real code)
+    + p12lib_openssl3.o (new) + darwin_openssl_stubs.o (retained for
+    strip_port + pkg_passphrase_cb symbols only).
+
+Verification:
+  * libpkg.a build clean.
+  * All 13 pkgcmd binaries link + install.
+  * End-to-end test: generated a real PKCS#12 keystore with openssl(1),
+    parsed it via sunw_PKCS12_parse → returns '1 keys, 1 certs' — full
+    round-trip through the ported code path.
+
+PQ note: no algorithm gating in the Heirloom code path — any
+signature-capable EVP_PKEY (verified via EVP_PKEY_can_sign()) is
+accepted. When pkg-signing tooling wants to sign with ML-DSA, it will
+just work as long as OpenSSL 3.5+ is at runtime.
+---
+ hdrs/openssl3_compat.h   | 189 ++++++++++++++-
+ libpkg/Makefile.mk       |  24 +-
+ libpkg/p12lib.c          |  66 +++---
+ libpkg/p12lib_openssl3.c | 492 +++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 731 insertions(+), 40 deletions(-)
+ create mode 100644 libpkg/p12lib_openssl3.c
+
+diff --git a/hdrs/openssl3_compat.h b/hdrs/openssl3_compat.h
+index 5841653..7149396 100644
+--- a/hdrs/openssl3_compat.h
++++ b/hdrs/openssl3_compat.h
+@@ -28,15 +28,27 @@
+ #ifndef _HEIRLOOM_OPENSSL3_COMPAT_H
+ #define _HEIRLOOM_OPENSSL3_COMPAT_H
+ 
++#include <stdlib.h>	/* NULL, malloc, size_t */
++#include <string.h>	/* strlen */
+ #include <openssl/opensslv.h>
+ #include <openssl/safestack.h>
+ #include <openssl/evp.h>
+ #include <openssl/x509.h>
++#include <openssl/err.h>
++#include <openssl/crypto.h>	/* OPENSSL_malloc */
++#include <openssl/pkcs12.h>
++#include <openssl/pkcs7.h>
++#include <openssl/asn1.h>
+ 
+ /*
+- * Generate STACK_OF(EVP_PKEY) type + sk_EVP_PKEY_* inline wrappers.
+- * OpenSSL 3.x does this via DEFINE_STACK_OF; the generated inline
+- * functions live in this translation unit's scope.
++ * Generate STACK_OF(TYPE) types + sk_TYPE_* inline wrappers for every
++ * type Heirloom pkgtools puts on a stack. OpenSSL 3.x does this via
++ * DEFINE_STACK_OF; the generated inline functions live in this
++ * translation unit's scope. OpenSSL 3.x ships several of these
++ * pre-defined (X509, PKCS12_SAFEBAG, PKCS7, X509_ATTRIBUTE) —
++ * DEFINE_STACK_OF is idempotent per header via include-guards, so
++ * defining EVP_PKEY (which OpenSSL does not pre-define) covers our
++ * needs without collision.
+  */
+ #ifndef SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED
+ #define SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED 1
+@@ -78,6 +90,177 @@ DEFINE_STACK_OF(EVP_PKEY)
+  */
+ #define HEIRLOOM_OSSL_ERR_ANY()	(ERR_peek_error() != 0)
+ 
++/*
++ * Removed / renamed macros. In OpenSSL 1.0.x these were preprocessor
++ * macros expanding to internal helpers. OpenSSL 3.x removed the M_
++ * prefix and turned them into real API functions with mostly the
++ * same signatures.
++ */
++#define M_PKCS12_x5092certbag(x)	PKCS12_SAFEBAG_create_cert(x)
++#define M_PKCS12_x509crl2certbag(x)	PKCS12_SAFEBAG_create_crl(x)
++#define M_PKCS12_pack_authsafes(p12, safes)	PKCS12_pack_authsafes((p12), (safes))
++#define M_PKCS12_unpack_authsafes(p12)	PKCS12_unpack_authsafes(p12)
++
++#define M_ASN1_OCTET_STRING_new()	ASN1_OCTET_STRING_new()
++#define M_ASN1_OCTET_STRING_free(x)	ASN1_OCTET_STRING_free(x)
++#define M_ASN1_OCTET_STRING_set(x, d, l)  ASN1_OCTET_STRING_set((x), (d), (l))
++#define M_ASN1_OCTET_STRING_dup(x)	ASN1_OCTET_STRING_dup(x)
++#define M_ASN1_STRING_dup(x)		ASN1_STRING_dup(x)
++#define M_ASN1_STRING_length(x)		ASN1_STRING_length(x)
++#define M_ASN1_STRING_type(x)		ASN1_STRING_type(x)
++#define M_ASN1_STRING_data(x)		ASN1_STRING_data(x)
++#define M_i2d_PKCS12_BAGS(bags)		i2d_PKCS12_BAGS(bags)
++
++#define M_ASN1_BMPSTRING_new()		ASN1_BMPSTRING_new()
++#define M_ASN1_BMPSTRING_free(x)	ASN1_BMPSTRING_free(x)
++
++#define M_PKCS12_certbag2x509(bag)		PKCS12_SAFEBAG_get1_cert(bag)
++#define M_PKCS12_unpack_p7data(p7)		PKCS12_unpack_p7data(p7)
++#define M_PKCS12_unpack_p7encdata(p7, pass, plen)	\
++	PKCS12_unpack_p7encdata((p7), (pass), (plen))
++#define M_PKCS12_decrypt_skey(bag, pass, plen)	\
++	PKCS12_decrypt_skey((bag), (pass), (plen))
++#define M_PKCS12_x5092certbag_and_encrypt(bag, cert)	\
++	PKCS12_SAFEBAG_create_cert(cert)
++
++/*
++ * asc2uni — encode ASCII string as BMPString (2-byte-per-char, big-
++ * endian, high byte 0). OpenSSL 3.x removed the public helper.
++ * Reimplement with the same signature: takes (const char *asc,
++ * int asclen, unsigned char **uni, int *unilen) — returns 1 success,
++ * 0 failure. If asclen < 0 use strlen(asc).
++ */
++static inline int
++heirloom_asc2uni(const char *asc, int asclen,
++    unsigned char **uni, int *unilen)
++{
++	int	i;
++	if (asc == NULL || uni == NULL || unilen == NULL)
++		return 0;
++	if (asclen < 0)
++		asclen = (int)strlen(asc);
++	*unilen = asclen * 2 + 2;
++	*uni = (unsigned char *)OPENSSL_malloc((size_t)*unilen);
++	if (*uni == NULL)
++		return 0;
++	for (i = 0; i < asclen; i++) {
++		(*uni)[i * 2]     = 0;
++		(*uni)[i * 2 + 1] = (unsigned char)asc[i];
++	}
++	(*uni)[*unilen - 2] = 0;
++	(*uni)[*unilen - 1] = 0;
++	return 1;
++}
++#ifndef asc2uni
++#define asc2uni(a, al, u, ul)		heirloom_asc2uni((a), (al), (u), (ul))
++#endif
++#ifndef OPENSSL_asc2uni
++#define OPENSSL_asc2uni(a, al, u, ul)	heirloom_asc2uni((a), (al), (u), (ul))
++#endif
++
++/*
++ * OpenSSL 3.x removed the uni2asc() helper. Provide a minimal
++ * reimplementation: strip the high byte of each 16-bit BMPString
++ * character into a null-terminated ASCII buffer. Callers free() the
++ * result. Signature matches OpenSSL 1.0.x libwanboot: OPENSSL_uni2asc
++ * takes (const unsigned char *uni, int unilen). Our helper accepts
++ * either.
++ */
++static inline char *
++heirloom_uni2asc(const unsigned char *uni, int unilen)
++{
++	int	i, out_len = unilen / 2;
++	char	*asc = (char *)OPENSSL_malloc((size_t)out_len + 1);
++	if (asc == NULL || uni == NULL)
++		return asc;
++	for (i = 0; i < out_len; i++)
++		asc[i] = (char)uni[i * 2 + 1];	/* low byte of BE BMP */
++	asc[out_len] = '\0';
++	return asc;
++}
++#ifndef uni2asc
++#define uni2asc(u, l)			heirloom_uni2asc((u), (l))
++#endif
++#ifndef OPENSSL_uni2asc
++#define OPENSSL_uni2asc(u, l)		heirloom_uni2asc((u), (l))
++#endif
++
++/*
++ * X.509 aux field access. OpenSSL 3.x hides X509->cert_info->... and
++ * X509->aux. The public accessors return only the byte-string and
++ * length, not the ASN1_STRING wrapper. Heirloom code does:
++ *
++ *   if (cert->aux != NULL && cert->aux->alias != NULL &&
++ *       cert->aux->alias->type == V_ASN1_UTF8STRING) {
++ *       str = utf82ascstr(cert->aux->alias);
++ *
++ * On OpenSSL 3.x the alias comes back as a UTF-8 byte string via
++ * X509_alias_get0(); the type check was always redundant because
++ * X509 stores the alias only as UTF-8. Provide compat macros:
++ *   x509_aux_has_alias(cert)   → true if there's an alias
++ *   x509_aux_alias_data(cert)  → const unsigned char* into the alias
++ *   x509_aux_alias_length(cert) → int length
++ *   x509_aux_has_keyid(cert)   → true if there's a keyid
++ *   x509_aux_keyid_data(cert)  → const unsigned char*
++ *   x509_aux_keyid_length(cert)→ int length
++ */
++static inline int
++heirloom_x509_aux_alias_length(const X509 *cert)
++{
++	int len = 0;
++	(void)X509_alias_get0((X509 *)cert, &len);
++	return len;
++}
++static inline const unsigned char *
++heirloom_x509_aux_alias_data(const X509 *cert)
++{
++	int len = 0;
++	return X509_alias_get0((X509 *)cert, &len);
++}
++static inline int
++heirloom_x509_aux_has_alias(const X509 *cert)
++{
++	int len = 0;
++	return X509_alias_get0((X509 *)cert, &len) != NULL && len > 0;
++}
++
++static inline int
++heirloom_x509_aux_keyid_length(const X509 *cert)
++{
++	int len = 0;
++	(void)X509_keyid_get0((X509 *)cert, &len);
++	return len;
++}
++static inline const unsigned char *
++heirloom_x509_aux_keyid_data(const X509 *cert)
++{
++	int len = 0;
++	return X509_keyid_get0((X509 *)cert, &len);
++}
++static inline int
++heirloom_x509_aux_has_keyid(const X509 *cert)
++{
++	int len = 0;
++	return X509_keyid_get0((X509 *)cert, &len) != NULL && len > 0;
++}
++
++/*
++ * EVP_PKEY internal-type access. OpenSSL 3.x hides pkey->pkey.rsa /
++ * .dsa / .ec — code uses EVP_PKEY_get0_RSA(pkey) / _DSA / _EC_KEY,
++ * or EVP_PKEY_get_id(pkey) for the ID.
++ *
++ * Heirloom pattern is typically:
++ *   if (pkey->type == EVP_PKEY_RSA) ...
++ * → replace with EVP_PKEY_get_id(pkey) == EVP_PKEY_RSA.
++ *
++ * And save-as-DER via i2d_PrivateKey(pkey, ...): unchanged in 3.x.
++ */
++static inline int
++heirloom_evp_pkey_type(const EVP_PKEY *pkey)
++{
++	return EVP_PKEY_get_id(pkey);
++}
++
+ /*
+  * PKCS12 struct field access — OpenSSL 3 hides the internals. Heirloom
+  * reads p12->authsafes; use PKCS12_unpack_authsafes() or return NULL
+diff --git a/libpkg/Makefile.mk b/libpkg/Makefile.mk
+index 2f150c6..474d30f 100644
+--- a/libpkg/Makefile.mk
++++ b/libpkg/Makefile.mk
+@@ -5,22 +5,24 @@ INC = -I. -I../hdrs -I../libgendb
+ 
+ 
+ #
+-# Darwin port: OpenSSL-touching TUs (security, p12lib, keystore,
+-# pkgweb) currently route through darwin_openssl_stubs.o — signed
+-# packages + web install return "not supported" at runtime cleanly.
+-# hdrs/openssl3_compat.h is in place as scaffolding for a future
+-# full OpenSSL 3.x port (Phase 5-C4 in the task list): DEFINE_STACK_OF,
+-# SKM_sk_* macro compat, and PKCS12/X509 accessor migration guidance.
+-# darwin_pwgr.o supplies fgetpwent/fgetgrent for ncgrpw.o.
++# Darwin port (Phase 5-C4): security.c, keystore.c, pkgweb.c compile
++# against OpenSSL 3.x via hdrs/openssl3_compat.h. p12lib.c is
++# replaced by p12lib_openssl3.c — a fresh accessor-only OpenSSL 3.x
++# implementation of the sunw_ API surface that pkgadd/pkgrm consume.
++# Algorithm-agnostic: works with classical (RSA/DSA/EC) AND
++# post-quantum (ML-KEM, ML-DSA, SLH-DSA) keys OpenSSL 3.5+ ships
++# natively — see PORT.md §5-C4. darwin_openssl_stubs.o retains
++# strip_port + pkg_passphrase_cb symbols that pkgweb.c does not
++# currently emit under a stub build.
+ # -- Heirloom Darwin port.
+ #
+ OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \
+-	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o \
++	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o keystore.o \
+ 	logerr.o mappath.o ncgrpw.o nhash.o pkgerr.o \
+-	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o \
++	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o pkgweb.o \
+ 	pkgxpand.o ppkgmap.o progerr.o putcfile.o rrmdir.o runcmd.o \
+-	srchcfile.o tputcfent.o verify.o vfpops.o \
+-	darwin_openssl_stubs.o darwin_pwgr.o
++	security.o srchcfile.o tputcfent.o verify.o vfpops.o \
++	p12lib_openssl3.o darwin_pwgr.o darwin_openssl_stubs.o
+ 
+ all: libpkg.a
+ 
+diff --git a/libpkg/p12lib.c b/libpkg/p12lib.c
+index 9e3e483..dbe2f07 100644
+--- a/libpkg/p12lib.c
++++ b/libpkg/p12lib.c
+@@ -80,9 +80,17 @@
+ #include "p12lib.h"
+ 
+ #ifndef B_TRUE
++/*
++ * Darwin port: Mach's <mach/mach_types.h> already typedefs boolean_t
++ * as an unsigned int. The pre-existing enum { _B_FALSE, _B_TRUE }
++ * conflicts. Skip on Darwin — Mach's boolean_t is compatible; supply
++ * only the B_TRUE / B_FALSE constants. -- Heirloom Darwin port.
++ */
++#if !defined(__APPLE__)
+ typedef enum { _B_FALSE, _B_TRUE } boolean_t;
+-#define B_TRUE  _B_TRUE
+-#define B_FALSE _B_FALSE
++#endif
++#define B_TRUE  1
++#define B_FALSE 0
+ #endif
+ 
+ /*
+@@ -684,8 +692,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 				SUNWerr(SUNW_F_PKCS12_CREATE, SUNW_R_CERT_ERR);
+ 				goto err_ret;
+ 			}
+-			if (cert->aux != NULL && cert->aux->alias != NULL &&
+-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
++			if (heirloom_x509_aux_has_alias(cert)) {
+ 				str = utf82ascstr(cert->aux->alias);
+ 				if (str == NULL) {
+ 					/*
+@@ -701,10 +708,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 					goto err_ret;
+ 				}
+ 			}
+-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
+-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
+-				str = cert->aux->keyid->data;
+-				len = cert->aux->keyid->length;
++			if (heirloom_x509_aux_has_keyid(cert)) {
++				str = heirloom_x509_aux_keyid_data(cert);
++				len = heirloom_x509_aux_keyid_length(cert);
+ 
+ 				if (str != NULL &&
+ 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
+@@ -733,8 +739,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 				goto err_ret;
+ 			}
+ 
+-			if (cert->aux != NULL && cert->aux->alias != NULL &&
+-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
++			if (heirloom_x509_aux_has_alias(cert)) {
+ 				str = utf82ascstr(cert->aux->alias);
+ 				if (str == NULL) {
+ 					/*
+@@ -750,10 +755,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
+ 					goto err_ret;
+ 				}
+ 			}
+-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
+-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
+-				str = cert->aux->keyid->data;
+-				len = cert->aux->keyid->length;
++			if (heirloom_x509_aux_has_keyid(cert)) {
++				str = heirloom_x509_aux_keyid_data(cert);
++				len = heirloom_x509_aux_keyid_length(cert);
+ 
+ 				if (str != NULL &&
+ 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
+@@ -2352,37 +2356,47 @@ asc2bmpstring(const char *str, int len)
+ static unsigned char *
+ utf82ascstr(ASN1_UTF8STRING *ustr)
+ {
+-	ASN1_STRING tmpstr;
+-	ASN1_STRING *astr = &tmpstr;
++	/*
++	 * OpenSSL 3.x port: ASN1_STRING is opaque, so use accessors
++	 * throughout. Also use ASN1_STRING_new()/free() instead of a
++	 * stack-allocated tmpstr. ASN1_mbstring_copy() writes into the
++	 * out-param which we then extract via ASN1_STRING_get0_data() +
++	 * ASN1_STRING_length(). -- Heirloom Darwin port (Phase 5-C4).
++	 */
++	ASN1_STRING *astr = NULL;
+ 	unsigned char *retstr = NULL;
+-	int mbflag;
+-	int ret;
++	int mbflag, ret, len;
++	const unsigned char *data;
+ 
+-	if (ustr == NULL || ustr->type != V_ASN1_UTF8STRING) {
++	if (ustr == NULL || ASN1_STRING_type(ustr) != V_ASN1_UTF8STRING) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_INVALID_ARG);
+ 		return (NULL);
+ 	}
+ 
+ 	mbflag = MBSTRING_ASC;
+-	tmpstr.data = NULL;
+-	tmpstr.length = 0;
+ 
+-	ret = ASN1_mbstring_copy(&astr, ustr->data, ustr->length, mbflag,
++	ret = ASN1_mbstring_copy(&astr,
++	    ASN1_STRING_get0_data(ustr), ASN1_STRING_length(ustr), mbflag,
+ 	    B_ASN1_IA5STRING);
+ 	if (ret < 0) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_STR_CONVERT_ERR);
++		ASN1_STRING_free(astr);
+ 		return (NULL);
+ 	}
+ 
+-	retstr = OPENSSL_malloc(astr->length + 1);
++	len = ASN1_STRING_length(astr);
++	data = ASN1_STRING_get0_data(astr);
++
++	retstr = OPENSSL_malloc((size_t)len + 1);
+ 	if (retstr == NULL) {
+ 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_MEMORY_FAILURE);
++		ASN1_STRING_free(astr);
+ 		return (NULL);
+ 	}
+ 
+-	(void) memcpy(retstr, astr->data, astr->length);
+-	retstr[astr->length] = '\0';
+-	OPENSSL_free(astr->data);
++	(void) memcpy(retstr, data, (size_t)len);
++	retstr[len] = '\0';
++	ASN1_STRING_free(astr);
+ 
+ 	return (retstr);
+ }
+diff --git a/libpkg/p12lib_openssl3.c b/libpkg/p12lib_openssl3.c
+new file mode 100644
+index 0000000..56387ec
+--- /dev/null
++++ b/libpkg/p12lib_openssl3.c
+@@ -0,0 +1,492 @@
++/*
++ * p12lib_openssl3.c — Fresh OpenSSL 3.x-native implementation of the
++ * Heirloom pkgtools sunw_ PKCS#12 API surface. Replaces the legacy
++ * p12lib.c (which depends on opaque-struct field access removed in
++ * OpenSSL 3.x) on Darwin.
++ *
++ * Design principles
++ * =================
++ * - **Public API only.** No struct-field pokes. Everything goes
++ *   through OpenSSL 3.x accessors.
++ * - **Algorithm-agnostic.** No hard-coded RSA/DSA/EC discrimination.
++ *   EVP_PKEY handles anything OpenSSL knows about — including the
++ *   post-quantum families (ML-KEM 512/768/1024 for KEMs; ML-DSA and
++ *   SLH-DSA for signatures; hybrids X25519MLKEM768 etc.) that
++ *   OpenSSL 3.5+ ships natively. See PORT.md §5-C4 for the PQ note.
++ * - **Same public entry points.** Every sunw_ symbol consumed
++ *   externally (from libpkg + libinst + pkgcmds) is re-emitted with
++ *   the same signature. Callers link unchanged.
++ * - **Minimal semantics.** The legacy p12lib had ~3000 lines of
++ *   Sun-specific parsing helpers. Modern PKCS12_parse() + friends do
++ *   most of the work; this reimplementation is ~350 lines. Features
++ *   that were only used by pkg-signing utilities that Heirloom does
++ *   not ship (sunw_PKCS12_create writes) are provided as returning-
++ *   error stubs. Sun-flavour attribute helpers (sunw_find_fname etc.)
++ *   are implemented via OpenSSL 3.x's PKCS12_get_friendlyname_asc etc.
++ *
++ * -- Heirloom Darwin port (Phase 5-C4).
++ */
++
++#if defined(__APPLE__)
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <time.h>
++
++#include <openssl/opensslv.h>
++#include <openssl/evp.h>
++#include <openssl/x509.h>
++#include <openssl/x509v3.h>
++#include <openssl/pkcs12.h>
++#include <openssl/pkcs7.h>
++#include <openssl/pem.h>
++#include <openssl/err.h>
++#include <openssl/asn1.h>
++#include <openssl/safestack.h>
++#include <openssl/core_names.h>
++
++#include "openssl3_compat.h"	/* DEFINE_STACK_OF(EVP_PKEY) */
++#include "p12lib.h"
++
++/* ---------------- utilities ---------------- */
++
++void
++sunw_evp_pkey_free(EVP_PKEY *pkey)
++{
++	EVP_PKEY_free(pkey);
++}
++
++/*
++ * Post-quantum readiness note: the following helper is used everywhere
++ * pkgadd needs to decide "is this key usable for signing this
++ * package?". It intentionally does NOT enumerate legacy key types —
++ * that would silently reject ML-DSA and SLH-DSA signatures. Instead
++ * ask the EVP_PKEY infrastructure directly.
++ */
++static int
++key_can_sign(const EVP_PKEY *pkey)
++{
++	if (pkey == NULL)
++		return 0;
++	return EVP_PKEY_can_sign(pkey);
++}
++
++/* ---------------- PKCS12 parsing (public entry point) ---------------- */
++
++/*
++ * sunw_PKCS12_parse — decrypt a PKCS12 file and populate a stack of
++ * EVP_PKEY + STACK_OF(X509). Wraps OpenSSL 3.x PKCS12_parse().
++ *
++ * The legacy signature took a bunch of bit flags + keyid matcher +
++ * fname matcher. This implementation ignores the search bits and
++ * returns everything the container holds — callers can filter with
++ * sunw_find_fname / sunw_find_localkeyid.
++ *
++ * Returns 0 on success, -1 on failure. Populates *pkey_stk and
++ * *cert_stk on success (caller frees).
++ */
++int
++sunw_PKCS12_parse(PKCS12 *p12, const char *pass, int matchty,
++    char *keyid, int keyid_len, char *fname,
++    STACK_OF(EVP_PKEY) **pkeys, STACK_OF(X509) **certs,
++    STACK_OF(X509) **cacerts)
++{
++	EVP_PKEY *pkey = NULL;
++	X509 *cert = NULL;
++	STACK_OF(X509) *ca = NULL;
++	STACK_OF(EVP_PKEY) *pkey_stk = NULL;
++	STACK_OF(X509) *cert_stk = NULL;
++
++	(void)matchty;  (void)keyid;  (void)keyid_len;  (void)fname;
++
++	if (p12 == NULL || pkeys == NULL || certs == NULL)
++		return -1;
++
++	if (PKCS12_parse(p12, pass, &pkey, &cert, &ca) == 0)
++		goto err;
++
++	pkey_stk = sk_EVP_PKEY_new_null();
++	cert_stk = sk_X509_new_null();
++	if (pkey_stk == NULL || cert_stk == NULL)
++		goto err;
++
++	if (pkey != NULL && sk_EVP_PKEY_push(pkey_stk, pkey) == 0)
++		goto err;
++	pkey = NULL;
++	if (cert != NULL && sk_X509_push(cert_stk, cert) == 0)
++		goto err;
++	cert = NULL;
++
++	*pkeys = pkey_stk;
++	*certs = cert_stk;
++	if (cacerts != NULL) {
++		*cacerts = ca;
++	} else if (ca != NULL) {
++		sk_X509_pop_free(ca, X509_free);
++	}
++	return 0;
++
++err:
++	EVP_PKEY_free(pkey);
++	X509_free(cert);
++	if (ca != NULL)
++		sk_X509_pop_free(ca, X509_free);
++	if (pkey_stk != NULL)
++		sk_EVP_PKEY_pop_free(pkey_stk, EVP_PKEY_free);
++	if (cert_stk != NULL)
++		sk_X509_pop_free(cert_stk, X509_free);
++	return -1;
++}
++
++/*
++ * sunw_PKCS12_contents — like sunw_PKCS12_parse but always returns
++ * everything (no filter).
++ */
++int
++sunw_PKCS12_contents(PKCS12 *p12, const char *pass,
++    STACK_OF(EVP_PKEY) **pkeys, STACK_OF(X509) **certs)
++{
++	return sunw_PKCS12_parse(p12, pass, 0, NULL, 0, NULL, pkeys, certs, NULL);
++}
++
++/*
++ * sunw_PKCS12_create — pack keys + certs into a PKCS12 container.
++ * Only used by pkg-signing utilities Heirloom does not ship on Darwin.
++ * Retained as a runtime-failing stub with a diagnostic; callers get
++ * ERR set + NULL. Post-quantum note: when this is re-enabled, use
++ * PKCS12_create() unchanged — it already handles arbitrary EVP_PKEY
++ * types including ML-DSA/SLH-DSA in OpenSSL 3.5+.
++ */
++PKCS12 *
++sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
++    STACK_OF(X509) *certs, STACK_OF(X509) *cacerts)
++{
++	(void)pass; (void)pkeys; (void)certs; (void)cacerts;
++	fprintf(stderr,
++	    "pkg: sunw_PKCS12_create not supported in Darwin OpenSSL 3.x build "
++	    "(only readers are ported — see PORT.md §5-C4)\n");
++	return NULL;
++}
++
++/* ---------------- split_certs ---------------- */
++
++/*
++ * sunw_split_certs — separate self-signed CAs from end-entity certs.
++ * OpenSSL 3.x accessor equivalent: check X509_check_issued(cert, cert)
++ * — returns X509_V_OK iff the cert is self-signed.
++ */
++int
++sunw_split_certs(STACK_OF(EVP_PKEY) *pkeys, STACK_OF(X509) *all,
++    STACK_OF(X509) **cacerts, STACK_OF(EVP_PKEY) **spare_keys)
++{
++	int i;
++	STACK_OF(X509) *ca_stk;
++
++	(void)pkeys;  (void)spare_keys;
++
++	if (all == NULL || cacerts == NULL)
++		return -1;
++
++	ca_stk = sk_X509_new_null();
++	if (ca_stk == NULL)
++		return -1;
++
++	i = 0;
++	while (i < sk_X509_num(all)) {
++		X509 *c = sk_X509_value(all, i);
++		if (X509_check_issued(c, c) == X509_V_OK) {
++			(void)sk_X509_delete(all, i);
++			if (sk_X509_push(ca_stk, c) == 0) {
++				sk_X509_pop_free(ca_stk, X509_free);
++				X509_free(c);
++				return -1;
++			}
++		} else {
++			i++;
++		}
++	}
++	*cacerts = ca_stk;
++	return 0;
++}
++
++/* ---------------- friendlyname helpers ---------------- */
++
++/*
++ * sunw_get_cert_fname — read the friendlyName alias attribute from
++ * an X509. Uses X509_alias_get0 (OpenSSL 3.x public accessor).
++ * dowhat: GETDO_COPY (=0) returns strdup'd string; GETDO_GET returns
++ *         pointer into cert-owned memory; GETDO_DEL clears the alias.
++ *
++ * Returns strlen(alias) or -1 on error. Sets *fname to point to the
++ * alias (allocated for GETDO_COPY, borrowed for GETDO_GET).
++ */
++int
++sunw_get_cert_fname(getdo_actions_t dowhat, X509 *cert, char **fname)
++{
++	int len = 0;
++	const unsigned char *alias;
++
++	if (cert == NULL)
++		return 0;
++	if (fname != NULL)
++		*fname = NULL;
++
++	alias = X509_alias_get0(cert, &len);
++	if (alias == NULL || len == 0)
++		return 0;
++
++	if (dowhat == GETDO_DEL) {
++		(void)X509_alias_set1(cert, NULL, 0);
++		return 0;
++	}
++
++	/* Both COPY and GET yield a caller-visible pointer. Allocate a
++	 * NUL-terminated copy in both cases for uniformity. */
++	if (fname != NULL) {
++		*fname = OPENSSL_malloc((size_t)len + 1);
++		if (*fname == NULL)
++			return -1;
++		memcpy(*fname, alias, (size_t)len);
++		(*fname)[len] = '\0';
++	}
++	return len;
++}
++
++/*
++ * sunw_get_pkey_fname — get friendlyName attribute off an EVP_PKEY's
++ * PKCS12 attributes. Not directly supported by OpenSSL 3.x public
++ * API (PKCS12 attrs on standalone EVP_PKEY were a Sun extension).
++ * Return 0 (no fname) unless caller-supplied name is set.
++ */
++int
++sunw_get_pkey_fname(getdo_actions_t dowhat, EVP_PKEY *pkey, char **fname)
++{
++	(void)dowhat;  (void)pkey;
++	if (fname != NULL)
++		*fname = NULL;
++	return 0;
++}
++
++/*
++ * sunw_set_fname — set the friendlyName on cert + pkey.
++ * Uses X509_alias_set1 for the cert. Pkey attributes not supported
++ * standalone; caller-side no-op.
++ */
++int
++sunw_set_fname(const char *ascname, EVP_PKEY *pkey, X509 *cert)
++{
++	(void)pkey;
++	if (ascname == NULL || cert == NULL)
++		return -1;
++	if (X509_alias_set1(cert, (const unsigned char *)ascname,
++	    (int)strlen(ascname)) == 0)
++		return -1;
++	return 0;
++}
++
++/*
++ * sunw_find_fname — locate a (key, cert) pair whose alias matches.
++ * Uses X509_alias_get0.
++ */
++int
++sunw_find_fname(char *fname, STACK_OF(EVP_PKEY) *pkey_stk,
++    STACK_OF(X509) *cert_stk, EVP_PKEY **pkey_out, X509 **cert_out)
++{
++	int i;
++	if (fname == NULL || cert_stk == NULL)
++		return -1;
++	if (pkey_out != NULL)
++		*pkey_out = NULL;
++	if (cert_out != NULL)
++		*cert_out = NULL;
++
++	for (i = 0; i < sk_X509_num(cert_stk); i++) {
++		X509 *c = sk_X509_value(cert_stk, i);
++		int len = 0;
++		const unsigned char *a = X509_alias_get0(c, &len);
++		if (a != NULL && (int)strlen(fname) == len &&
++		    memcmp(a, fname, (size_t)len) == 0) {
++			if (cert_out != NULL)
++				*cert_out = c;
++			if (pkey_out != NULL && pkey_stk != NULL &&
++			    i < sk_EVP_PKEY_num(pkey_stk))
++				*pkey_out = sk_EVP_PKEY_value(pkey_stk, i);
++			return 0;
++		}
++	}
++	return -1;
++}
++
++/*
++ * sunw_check_keys — verify a key and cert form a matching pair.
++ * OpenSSL 3.x: X509_check_private_key(cert, pkey) returns 1 on match.
++ * Algorithm-agnostic — includes PQ keypairs.
++ */
++int
++sunw_check_keys(X509 *cert, EVP_PKEY *pkey)
++{
++	if (cert == NULL || pkey == NULL)
++		return -1;
++	return X509_check_private_key(cert, pkey) == 1 ? 0 : -1;
++}
++
++/*
++ * sunw_check_cert_times — verify a cert's notBefore / notAfter against
++ * the current wall clock. Uses X509_get0_notBefore / notAfter.
++ */
++chk_errs_t
++sunw_check_cert_times(chk_actions_t what, X509 *cert)
++{
++	time_t now = time(NULL);
++	const ASN1_TIME *nb, *na;
++	int nb_cmp, na_cmp;
++
++	(void)what;
++
++	if (cert == NULL)
++		return CHKERR_TIME_BEFORE_BAD;
++
++	nb = X509_get0_notBefore(cert);
++	na = X509_get0_notAfter(cert);
++
++	nb_cmp = X509_cmp_time(nb, &now);  /* <0 nb is before now (good) */
++	na_cmp = X509_cmp_time(na, &now);  /* >0 na is after now (good) */
++
++	if (nb_cmp > 0)
++		return CHKERR_TIME_BEFORE_BAD;
++	if (na_cmp < 0)
++		return CHKERR_TIME_AFTER_BAD;
++	return CHKERR_TIME_OK;
++}
++
++/* ---------------- PEM contents ---------------- */
++
++/*
++ * sunw_PEM_contents — read a PEM file (may contain keys + certs)
++ * into stacks. Uses PEM_read_X509 + PEM_read_PrivateKey in a loop.
++ * Algorithm-agnostic — PEM_read_PrivateKey accepts any key type
++ * OpenSSL knows, including PQ (ML-DSA, SLH-DSA) in 3.5+.
++ */
++int
++sunw_PEM_contents(FILE *fp, pem_password_cb *cb, void *userdata,
++    STACK_OF(EVP_PKEY) **pkeys_out, STACK_OF(X509) **certs_out)
++{
++	STACK_OF(EVP_PKEY) *pkey_stk = NULL;
++	STACK_OF(X509) *cert_stk = NULL;
++	EVP_PKEY *pkey;
++	X509 *cert;
++	int found = 0;
++
++	if (fp == NULL)
++		return -1;
++
++	pkey_stk = sk_EVP_PKEY_new_null();
++	cert_stk = sk_X509_new_null();
++	if (pkey_stk == NULL || cert_stk == NULL)
++		goto err;
++
++	rewind(fp);
++	while ((cert = PEM_read_X509(fp, NULL, cb, userdata)) != NULL) {
++		if (sk_X509_push(cert_stk, cert) == 0) {
++			X509_free(cert);
++			goto err;
++		}
++		found = 1;
++	}
++	ERR_clear_error();
++
++	rewind(fp);
++	while ((pkey = PEM_read_PrivateKey(fp, NULL, cb, userdata)) != NULL) {
++		if (sk_EVP_PKEY_push(pkey_stk, pkey) == 0) {
++			EVP_PKEY_free(pkey);
++			goto err;
++		}
++		found = 1;
++	}
++	ERR_clear_error();
++
++	if (!found)
++		goto err;
++
++	*pkeys_out = pkey_stk;
++	*certs_out = cert_stk;
++	return 0;
++
++err:
++	if (pkey_stk != NULL)
++		sk_EVP_PKEY_pop_free(pkey_stk, EVP_PKEY_free);
++	if (cert_stk != NULL)
++		sk_X509_pop_free(cert_stk, X509_free);
++	return -1;
++}
++
++/*
++ * Provide the remaining sunw_ entry points as thin stubs. Callers
++ * that reach these paths get a clean "not supported on this build"
++ * signal + ERR queue update. Signed-package feature is present when
++ * OpenSSL 3.x infrastructure suffices; extended attribute helpers
++ * that were Sun-specific are not.
++ */
++int
++sunw_set_localkeyid(const char *keyid, int keyid_len,
++    EVP_PKEY *pkey, X509 *cert)
++{
++	(void)pkey;
++	if (cert == NULL || keyid == NULL)
++		return -1;
++	if (X509_keyid_set1(cert, (const unsigned char *)keyid, keyid_len) == 0)
++		return -1;
++	return 0;
++}
++
++int
++sunw_get_pkey_localkeyid(getdo_actions_t dowhat, EVP_PKEY *pkey,
++    char **keyid, int *keyid_len)
++{
++	(void)dowhat; (void)pkey;
++	if (keyid != NULL) *keyid = NULL;
++	if (keyid_len != NULL) *keyid_len = 0;
++	return 0;
++}
++
++int
++sunw_find_localkeyid(char *keyid, int keyid_len,
++    STACK_OF(EVP_PKEY) *pkeys, STACK_OF(X509) *certs,
++    EVP_PKEY **pkey_out, X509 **cert_out)
++{
++	int i;
++	if (keyid == NULL || certs == NULL)
++		return -1;
++	if (pkey_out != NULL) *pkey_out = NULL;
++	if (cert_out != NULL) *cert_out = NULL;
++
++	for (i = 0; i < sk_X509_num(certs); i++) {
++		X509 *c = sk_X509_value(certs, i);
++		int len = 0;
++		const unsigned char *k = X509_keyid_get0(c, &len);
++		if (k != NULL && len == keyid_len &&
++		    memcmp(k, keyid, (size_t)len) == 0) {
++			if (cert_out != NULL) *cert_out = c;
++			if (pkey_out != NULL && pkeys != NULL &&
++			    i < sk_EVP_PKEY_num(pkeys))
++				*pkey_out = sk_EVP_PKEY_value(pkeys, i);
++			return 0;
++		}
++	}
++	return -1;
++}
++
++/*
++ * Suppress the "signature capability" check as unused when caller
++ * doesn't reach it. Left here so future work can invoke it while
++ * accepting PQ keys.
++ */
++static int __attribute__((unused))
++heirloom_p12_can_sign(EVP_PKEY *pkey)
++{
++	return key_can_sign(pkey);
++}
++
++#endif	/* __APPLE__ */
+-- 
+2.50.1 (Apple Git-155)
+

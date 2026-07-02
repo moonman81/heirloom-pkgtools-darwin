@@ -1,0 +1,219 @@
+From 25c79f5fc4a24e76db814317906a374a7c41b1fc Mon Sep 17 00:00:00 2001
+From: Warwick Brown <me@moonman.me.uk>
+Date: Thu, 2 Jul 2026 18:54:50 +0100
+Subject: [PATCH 4/6] phase 5-C4 (scaffolding): OpenSSL 3.x compat header
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Places hdrs/openssl3_compat.h as ready scaffolding for a future full
+OpenSSL 3.x port of security.c, p12lib.c, keystore.c, pkgweb.c.
+Contents:
+
+  - DEFINE_STACK_OF(EVP_PKEY) generates the sk_EVP_PKEY_* inline
+    wrappers OpenSSL 3.x needs (OpenSSL 1.0.x supplied these via
+    SKM_sk_* macros pattern-expanded from DECLARE_STACK_OF).
+
+  - SKM_sk_<op>(TYPE, ...) → sk_TYPE_<op>(...) token-paste macros
+    so the existing pkgtools call sites work unchanged under either
+    OpenSSL version.
+
+  - HEIRLOOM_OSSL_ERR_ANY() macro for the ERR_STATE opaque-struct
+    migration path.
+
+  - Guidance comment for PKCS12 accessor migration (the real work
+    left in Phase 5-C4: X509/EVP_PKEY direct field access
+    (cert->cert_info->..., pkey->pkey.rsa) → X509_get0_*, EVP_PKEY_get0_*
+    accessor calls, and PKCS12 macro M_PKCS12_* → PKCS12_SAFEBAG_get1_*).
+
+libpkg/p12lib.h now includes openssl3_compat.h; the DECLARE_STACK_OF
+is version-gated so the file compiles unchanged under OpenSSL 1.0.x.
+
+mk.config exposes LIBS=-L.../openssl@3/lib -lssl -lcrypto for the
+eventual pkgcmd link. Currently the stub build (per Makefile.mk) does
+not link OpenSSL — that stays disabled until the deep port lands.
+
+Result: build stays green with darwin_openssl_stubs.o (as before);
+signed-package and web-install still route to the runtime-failing
+stubs. Task #19 tracks the remaining work.
+---
+ hdrs/openssl3_compat.h | 89 ++++++++++++++++++++++++++++++++++++++++++
+ libpkg/Makefile.mk     | 12 +++---
+ libpkg/p12lib.h        | 15 ++++++-
+ mk.config              |  7 ++++
+ 4 files changed, 117 insertions(+), 6 deletions(-)
+ create mode 100644 hdrs/openssl3_compat.h
+
+diff --git a/hdrs/openssl3_compat.h b/hdrs/openssl3_compat.h
+new file mode 100644
+index 0000000..5841653
+--- /dev/null
++++ b/hdrs/openssl3_compat.h
+@@ -0,0 +1,89 @@
++/*
++ * openssl3_compat.h — Compatibility shim mapping OpenSSL 1.0.x macros
++ * used by Heirloom pkgtools to OpenSSL 3.x primitives.
++ *
++ * Heirloom's libpkg/{p12lib,security,keystore,pkgweb}.[ch] were
++ * authored against OpenSSL 1.0.x and use:
++ *
++ *   - DECLARE_STACK_OF(TYPE)           — generate STACK_OF(TYPE) type
++ *   - SKM_sk_<op>(TYPE, ...)           — per-op stack manipulation
++ *   - ERR_STATE.top / errcnt legacy    — direct struct access
++ *   - PKCS12 accessor field reads      — direct struct access
++ *
++ * OpenSSL 3.x replaced this with:
++ *
++ *   - DEFINE_STACK_OF(TYPE)            — generate type + inline sk_TYPE_*
++ *   - sk_TYPE_<op>(...)                — per-type inline wrappers around
++ *                                        OPENSSL_sk_<op>
++ *   - opaque struct pointers; use      — accessor functions
++ *     accessor APIs
++ *
++ * This header (a) defines DEFINE_STACK_OF for the types Heirloom needs,
++ * and (b) provides SKM_sk_<op> compat macros expressed in terms of
++ * OpenSSL 3.x sk_TYPE_<op>. Include from p12lib.h before any use.
++ *
++ * -- Heirloom Darwin port (Phase 5-C4).
++ */
++
++#ifndef _HEIRLOOM_OPENSSL3_COMPAT_H
++#define _HEIRLOOM_OPENSSL3_COMPAT_H
++
++#include <openssl/opensslv.h>
++#include <openssl/safestack.h>
++#include <openssl/evp.h>
++#include <openssl/x509.h>
++
++/*
++ * Generate STACK_OF(EVP_PKEY) type + sk_EVP_PKEY_* inline wrappers.
++ * OpenSSL 3.x does this via DEFINE_STACK_OF; the generated inline
++ * functions live in this translation unit's scope.
++ */
++#ifndef SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED
++#define SKM_HEIRLOOM_STACK_OF_EVP_PKEY_DEFINED 1
++DEFINE_STACK_OF(EVP_PKEY)
++#endif
++
++/*
++ * Compat: SKM_sk_<op>(TYPE, ...) → sk_TYPE_<op>(...).
++ * The token-paste variant lets the same code text work under both
++ * OpenSSL 1.0.x and 3.x since the substitutions expand to real
++ * per-type functions in 3.x and to old macro-machinery in 1.0.x.
++ */
++#define SKM_sk_new_null(T)          sk_##T##_new_null()
++#define SKM_sk_new(T, cmp)          sk_##T##_new(cmp)
++#define SKM_sk_free(T, st)          sk_##T##_free(st)
++#define SKM_sk_zero(T, st)          sk_##T##_zero(st)
++#define SKM_sk_num(T, st)           sk_##T##_num(st)
++#define SKM_sk_value(T, st, i)      sk_##T##_value((st), (i))
++#define SKM_sk_push(T, st, v)       sk_##T##_push((st), (v))
++#define SKM_sk_pop(T, st)           sk_##T##_pop(st)
++#define SKM_sk_find(T, st, v)       sk_##T##_find((st), (v))
++#define SKM_sk_delete(T, st, i)     sk_##T##_delete((st), (i))
++#define SKM_sk_delete_ptr(T, st, p) sk_##T##_delete_ptr((st), (p))
++#define SKM_sk_insert(T, st, v, i)  sk_##T##_insert((st), (v), (i))
++#define SKM_sk_pop_free(T, st, f)   sk_##T##_pop_free((st), (f))
++#define SKM_sk_set(T, st, i, v)     sk_##T##_set((st), (i), (v))
++#define SKM_sk_shift(T, st)         sk_##T##_shift(st)
++#define SKM_sk_unshift(T, st, v)    sk_##T##_unshift((st), (v))
++#define SKM_sk_dup(T, st)           sk_##T##_dup(st)
++#define SKM_sk_deep_copy(T, st, cp, fr)  sk_##T##_deep_copy((st), (cp), (fr))
++#define SKM_sk_sort(T, st)          sk_##T##_sort(st)
++#define SKM_sk_is_sorted(T, st)     sk_##T##_is_sorted(st)
++
++/*
++ * ERR_STATE.top and .errcnt — OpenSSL 3.x makes ERR_STATE opaque.
++ * Heirloom uses these to detect "was any error queued?" — replace
++ * with the OpenSSL 3 accessor ERR_peek_error() which returns 0
++ * when the queue is empty.
++ */
++#define HEIRLOOM_OSSL_ERR_ANY()	(ERR_peek_error() != 0)
++
++/*
++ * PKCS12 struct field access — OpenSSL 3 hides the internals. Heirloom
++ * reads p12->authsafes; use PKCS12_unpack_authsafes() or return NULL
++ * if the field can't be reached. For the paths pkgtools actually uses
++ * (verify + parse), the public API PKCS12_parse + PKCS12_verify_mac
++ * suffices and internal field access is not required.
++ */
++
++#endif /* _HEIRLOOM_OPENSSL3_COMPAT_H */
+diff --git a/libpkg/Makefile.mk b/libpkg/Makefile.mk
+index 7787e16..2f150c6 100644
+--- a/libpkg/Makefile.mk
++++ b/libpkg/Makefile.mk
+@@ -5,11 +5,13 @@ INC = -I. -I../hdrs -I../libgendb
+ 
+ 
+ #
+-# Darwin port: swap the four OpenSSL-touching TUs (security, p12lib,
+-# keystore, pkgweb) for a single stub file. Upstream marks these as
+-# "partially disabled in this variant" (see pkgtools README); they
+-# also fail to build against OpenSSL 3.x. darwin_pwgr.o supplies
+-# fgetpwent/fgetgrent for ncgrpw.o. See PORT.md deviation register.
++# Darwin port: OpenSSL-touching TUs (security, p12lib, keystore,
++# pkgweb) currently route through darwin_openssl_stubs.o — signed
++# packages + web install return "not supported" at runtime cleanly.
++# hdrs/openssl3_compat.h is in place as scaffolding for a future
++# full OpenSSL 3.x port (Phase 5-C4 in the task list): DEFINE_STACK_OF,
++# SKM_sk_* macro compat, and PKCS12/X509 accessor migration guidance.
++# darwin_pwgr.o supplies fgetpwent/fgetgrent for ncgrpw.o.
+ # -- Heirloom Darwin port.
+ #
+ OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \
+diff --git a/libpkg/p12lib.h b/libpkg/p12lib.h
+index 9fb1d0e..d32d014 100644
+--- a/libpkg/p12lib.h
++++ b/libpkg/p12lib.h
+@@ -72,6 +72,13 @@
+ #include <openssl/pkcs12.h>
+ #include <openssl/pem.h>
+ 
++/*
++ * OpenSSL 3.x compatibility: the openssl3_compat header supplies the
++ * SKM_sk_* macros this file's callers use, plus DEFINE_STACK_OF for
++ * STACK_OF(EVP_PKEY). -- Heirloom Darwin port (Phase 5-C4).
++ */
++#include "openssl3_compat.h"
++
+ /*
+  * PKCS12 file routines borrowed from SNT's libwanboot.
+  */
+@@ -80,8 +87,14 @@
+ extern "C" {
+ #endif
+ 
+-/* These declarations allow us to make stacks of EVP_PKEY objects */
++/*
++ * Under OpenSSL 3.x, DEFINE_STACK_OF(EVP_PKEY) in openssl3_compat.h
++ * has already generated the STACK_OF(EVP_PKEY) type + sk_EVP_PKEY_*
++ * inline wrappers, so the original DECLARE_STACK_OF is redundant.
++ */
++#if OPENSSL_VERSION_NUMBER < 0x30000000L
+ DECLARE_STACK_OF(EVP_PKEY)
++#endif
+ #define	sk_EVP_PKEY_new_null() SKM_sk_new_null(EVP_PKEY)
+ #define	sk_EVP_PKEY_free(st) SKM_sk_free(EVP_PKEY, (st))
+ #define	sk_EVP_PKEY_num(st) SKM_sk_num(EVP_PKEY, (st))
+diff --git a/mk.config b/mk.config
+index a4e446f..d66f92e 100644
+--- a/mk.config
++++ b/mk.config
+@@ -72,6 +72,13 @@ CFLAGS=-O -g
+ HDRS=/Volumes/heirloom/src/pkgtools/hdrs
+ CPPFLAGS=-D_DARWIN_C_SOURCE -include $(HDRS)/darwin_stat_shim.h -I$(HDRS) -I/opt/homebrew/opt/openssl@3/include
+ 
++#
++# LIBS carries the OpenSSL 3.x runtime for pkgcmd linking. Referenced
++# via $(LIBS) in each pkgcmd's Makefile.mk. -- Heirloom Darwin port
++# (Phase 5-C4).
++#
++LIBS=-L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto
++
+ #
+ # scriptvfy.l uses Bell Labs lex internals (yytchar, yysptr, yysbuf, U())
+ # that flex does not emit. Point LEX at the Heirloom-devtools lex which
+-- 
+2.50.1 (Apple Git-155)
+

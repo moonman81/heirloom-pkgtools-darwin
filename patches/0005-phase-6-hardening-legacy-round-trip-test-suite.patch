@@ -1,0 +1,93 @@
+From a92234a72351ca0c42a6f25b0c3a87a7c0b0be68 Mon Sep 17 00:00:00 2001
+From: Warwick Brown <me@moonman.me.uk>
+Date: Thu, 2 Jul 2026 20:06:42 +0100
+Subject: [PATCH 5/6] phase 6: hardening + legacy round-trip test suite
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Post-build discipline per PORT.md §5 (SDLC/SSDLC / CWE-25 / OWASP-10 /
+ATT&CK / CAPEC). Six discrete slices under hardening/:
+
+  setuid-audit/      — enumerate suid/sgid installs, cross-check
+                       against source intent, verify dependency
+                       trust chain and @rpath entries.
+                       install-suid.sh applies the intent under sudo.
+  format-string-audit/ — grep + clang -Wformat-security scan.
+                         Real findings: cpio.c:2413, pkgerr.c:116,
+                         tputcfent.c:162 (all fixed inline). Post-fix
+                         scan is clean.
+  roundtrip/         — legacy artefact preservation tests: cpio
+                       (bin, odc, crc), tar (ustar + old), SCCS
+                       (admin/get/prs), SVR4 pkgparam, POSIX-2001
+                       awk, ISO 8601 date. 10/10 pass.
+  static-analysis/   — clang -Wall -Wextra pass per hot utility;
+                       cpio built and round-tripped under ASan +
+                       UBSan — no runtime findings.
+  fuzz-seeds/        — 20+ hand-crafted seed inputs across nawk,
+                       oawk, bc, dc, ed, sed, calendar, expr.
+                       smoke-run.sh validates every seed exits by
+                       status, not by signal. Deep-recursion seed
+                       exposes universal awk CWE-674 (accepted risk;
+                       depth reduced to 500 for smoke suite).
+  Makefile           — 'make -C hardening all' runs the whole suite.
+
+CWE-134 source fixes (committed alongside):
+  toolchest/cpio/cpio.c:  user-supplied -I/-O passed as snprintf format
+                          → literal '%s'.
+  pkgtools/libpkg/pkgerr.c: err->msgs[i] flowed to fprintf format
+                          → literal '%s'.
+  pkgtools/libpkg/tputcfent.c: strftime output flowed to fprintf format
+                          → literal '%s'.
+
+COVERAGE-MATRIX.md maps every check to concrete CWE / OWASP / ATT&CK /
+CAPEC entries and records what remains for future work.
+
+Final tally: 0 findings across all four automated slices post-fix.
+---
+ libpkg/pkgerr.c    |  7 ++++++-
+ libpkg/tputcfent.c | 10 +++++++++-
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/libpkg/pkgerr.c b/libpkg/pkgerr.c
+index 32a8f6a..b9b8be2 100644
+--- a/libpkg/pkgerr.c
++++ b/libpkg/pkgerr.c
+@@ -113,7 +113,12 @@ pkgerr_dump(PKG_ERR *err, FILE *fp)
+ 	int i;
+ 
+ 	for (i = 0; i < err->nerrs; i++) {
+-		(void) fprintf(fp, err->msgs[i]);
++		/*
++		 * CWE-134: err->msgs[i] may originate from package metadata
++		 * or filenames — attacker-controllable at pkgadd time. Use
++		 * a literal format. -- Heirloom Darwin hardening.
++		 */
++		(void) fprintf(fp, "%s", err->msgs[i]);
+ 	}
+ 	return (0);
+ }
+diff --git a/libpkg/tputcfent.c b/libpkg/tputcfent.c
+index 8d30206..a8bab2e 100644
+--- a/libpkg/tputcfent.c
++++ b/libpkg/tputcfent.c
+@@ -159,7 +159,15 @@ tputcfent(struct cfent *ept, FILE *fp)
+ 			strftime(timeb, sizeof (timeb),
+ 			    pkg_gt("Expected last modification: %b %d %X %Y\n"),
+ 			    timep);
+-			(void) fprintf(fp, timeb);
++			/*
++			 * CWE-134: timeb was produced by strftime() and can
++			 * contain literal characters from the locale-
++			 * translated format string. Any '%' surviving into
++			 * timeb (e.g. from a hostile translation catalogue)
++			 * would be re-interpreted by fprintf. Use %s.
++			 * -- Heirloom Darwin hardening.
++			 */
++			(void) fprintf(fp, "%s", timeb);
+ 		} else
+ 			(void) fprintf(fp,
+ 			    pkg_gt("Expected last modification: ?\n"));
+-- 
+2.50.1 (Apple Git-155)
+

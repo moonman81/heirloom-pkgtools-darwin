@@ -1,0 +1,106 @@
+From c38a51d5391e8fc0ae4303bdb31cb9ab9b30b432 Mon Sep 17 00:00:00 2001
+From: Warwick Brown <me@moonman.me.uk>
+Date: Thu, 2 Jul 2026 13:23:53 +0100
+Subject: [PATCH 1/6] phase 0: Darwin mk.config overlays + top-level driver +
+ PORT.md
+
+- Install prefix /opt/heirloom across all 5 packages.
+- CPPFLAGS: -D_GNU_SOURCE -> -D_DARWIN_C_SOURCE.
+- LARGEF emptied (Darwin off_t already 64-bit).
+- LCRYPT emptied, LIBBZ2 enabled, LIBZ dropped -Bstatic/-Bdynamic (lld).
+- RANLIB = 'ranlib -c' on all 5.
+- Toolchest personalities point at bin, bin/s42, bin/posix, bin/posix2001, ucb.
+- Pkgtools CPPFLAGS gains -I/opt/homebrew/opt/openssl@3/include.
+- Fix pre-existing sh/makefile CFLAGS-clobber bug (split into CPPFLAGS).
+- Top-level src/Makefile drives phase1..phase5 build+install.
+- PORT.md records host + decisions + per-package deviations.
+---
+ mk.config | 24 ++++++++++++------------
+ 1 file changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/mk.config b/mk.config
+index 0a07b34..da9ee22 100644
+--- a/mk.config
++++ b/mk.config
+@@ -2,41 +2,41 @@
+ # Path to the Heirloom Bourne shell. It is used during compilation
+ # as well as by the package commands.
+ #
+-SHELL = /usr/5bin/sh
++SHELL = /opt/heirloom/bin/sh
+ 
+ #
+ # A BSD-compatible install command.
+ #
+-INSTALL=/usr/ucb/install
++INSTALL=/usr/bin/install
+ 
+ #
+ # Where the Heirloom Development Tools package has been placed.
+ # $(CCSDIR)/bin must also be in the PATH setting when building.
+ #
+-CCSDIR=/usr/ccs
++CCSDIR=/opt/heirloom/ccs
+ 
+ #
+ # Prefixes.
+ #
+-PREFIX=/usr
+-VAR=/var
++PREFIX=/opt/heirloom
++VAR=/opt/heirloom/var
+ 
+ #
+ # Where to place binaries. This must be the same place
+ # where the Heirloom Toolchest binaries are installed.
+ #
+-BINDIR=$(PREFIX)/5bin
++BINDIR=$(PREFIX)/bin
+ 
+ #
+ # Where to place superuser-only binaries. This may be
+ # the same place as the binary directory.
+ #
+-SBINDIR=$(PREFIX)/5bin
++SBINDIR=$(PREFIX)/bin
+ 
+ #
+ # Where to place configuration files.
+ #
+-ETCDIR=/etc
++ETCDIR=$(PREFIX)/etc
+ 
+ #
+ # Where to place (read-only) helper files.
+@@ -61,7 +61,7 @@ STRIP=strip
+ #
+ # Compiler flags.
+ #
+-CFLAGS=-O
++CFLAGS=-O -g
+ 
+ #
+ # C preprocessor flags.
+@@ -69,7 +69,7 @@ CFLAGS=-O
+ # Use -D_GNU_SOURCE for Linux with GNU libc.
+ # Use -D_INCLUDE__STDC_A1_SOURCE for HP-UX.
+ #
+-CPPFLAGS=-D_GNU_SOURCE
++CPPFLAGS=-D_DARWIN_C_SOURCE -I/opt/homebrew/opt/openssl@3/include
+ 
+ #
+ # Warning flags for the compiler.
+@@ -95,8 +95,8 @@ LIBS=
+ # Run ranlib if it is in the current path. This should take care
+ # of most situations. On Mac OS X, you need to uncomment "ranlib -c".
+ #
+-RANLIB=(hash ranlib) >/dev/null 2>&1 || exit 0; ranlib
+-#RANLIB=ranlib -c
++#RANLIB=(hash ranlib) >/dev/null 2>&1 || exit 0; ranlib
++RANLIB=ranlib -c
+ 
+ #
+ # Use this if you prefer hard links between installed files.
+-- 
+2.50.1 (Apple Git-155)
+
