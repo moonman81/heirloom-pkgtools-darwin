@@ -43,6 +43,7 @@ extern "C" {
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>	/* fsblkcnt_t used in prototypes below */
 #include <pkgstrct.h>
 #include <pkginfo.h>
 #include "pkglib.h"
@@ -269,13 +270,20 @@ extern int	is_fs_writeable_n __P((short n));
 extern int	is_remote_fs_n __P((short n));
 extern int	is_served_n __P((short n));
 extern int	is_mounted_n __P((short n));
-extern unsigned long	get_blk_size_n __P((short n));
-extern unsigned long	get_frag_size_n __P((short n));
-extern unsigned long	get_blk_used_n __P((short n));
-extern void	set_blk_used_n __P((short n, unsigned long value));
-extern unsigned long	get_blk_free_n __P((short n));
-extern unsigned long	get_inode_used_n __P((short n));
-extern unsigned long	get_inode_free_n __P((short n));
+/*
+ * Portability note: mntinfo.c defines these as returning fsblkcnt_t,
+ * matching struct fstable's field type. On Solaris fsblkcnt_t is
+ * unsigned long; on Darwin it is uint32_t; on 64-bit Linux it is
+ * unsigned long. Use fsblkcnt_t here so the prototype matches the
+ * definition on every target. -- Heirloom Darwin port.
+ */
+extern fsblkcnt_t	get_blk_size_n __P((short n));
+extern fsblkcnt_t	get_frag_size_n __P((short n));
+extern fsblkcnt_t	get_blk_used_n __P((short n));
+extern void		set_blk_used_n __P((short n, fsblkcnt_t value));
+extern fsblkcnt_t	get_blk_free_n __P((short n));
+extern fsblkcnt_t	get_inode_used_n __P((short n));
+extern fsblkcnt_t	get_inode_free_n __P((short n));
 extern char	*get_source_name_n __P((short n));
 extern char	*get_fs_name_n __P((short n));
 extern int	load_fsentry __P((struct fstable *fs_entry, char *name,

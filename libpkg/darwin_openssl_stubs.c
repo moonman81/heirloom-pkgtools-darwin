@@ -136,4 +136,35 @@ int	get_signature(void *e, char *ids, void *dev, void **result)
 }
 void	set_web_install(void)			{ /* no-op */ }
 
+/*
+ * pkg_passphrase_cb — OpenSSL passphrase callback registered by
+ * pkgtrans main.c and pkgadd. Signature matches pem_password_cb.
+ * Return 0 (no passphrase entered) on Darwin — signed operations
+ * will fail cleanly in the stubs above.
+ */
+int
+pkg_passphrase_cb(char *buf, int size, int rwflag, void *userdata)
+{
+	(void)buf; (void)size; (void)rwflag; (void)userdata;
+	return 0;
+}
+
+/*
+ * strip_port — pkgweb helper that separates host:port. Callers in
+ * libinst/setadmin.c consume the host and drop the port. Simplified
+ * Darwin stub: strip anything after the first ':'. Safe for both
+ * IPv4 host:port and bare hosts. -- Heirloom Darwin port.
+ */
+char *
+strip_port(char *proxy)
+{
+	char *c;
+	if (proxy == NULL)
+		return NULL;
+	c = strchr(proxy, ':');
+	if (c)
+		*c = '\0';
+	return proxy;
+}
+
 #endif	/* __APPLE__ */

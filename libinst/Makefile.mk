@@ -4,9 +4,15 @@ INC = -I../hdrs -I../libpkg -I../libgendb -I../libspmizones
 	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INC) $(PATHS) $(WARN) $<
 
 
+#
+# Darwin port: swap mntinfo.o for mntinfo_darwin.o. Also is_local_host.o
+# — the Solaris impl uses sysinfo(SI_HOSTNAME) which Darwin lacks; the
+# Darwin impl lives inside mntinfo_darwin.c alongside the other name-
+# resolution helpers. -- Heirloom Darwin port.
+#
 OBJ = copyf.o cvtpath.o depchk.o dockdeps.o doulimit.o dryrun.o echo.o \
 	eptstat.o finalck.o findscripts.o fixpath.o flex_dev.o \
-	is_local_host.o isreloc.o listmgr.o lockinst.o log.o mntinfo.o \
+	isreloc.o listmgr.o lockinst.o log.o mntinfo_darwin.o \
 	nblk.o ocfile.o open_package_datastream.o pathdup.o pkgdbmerg.o \
 	pkgobjmap.o pkgops.o pkgpatch.o procmap.o psvr4ck.o ptext.o \
 	putparam.o qreason.o qstrdup.o setadmin.o setlist.o \

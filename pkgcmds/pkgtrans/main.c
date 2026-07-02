@@ -138,7 +138,12 @@ main(int argc, char *argv[])
 	(void) signal(SIGQUIT, trap);
 	(void) signal(SIGTERM, trap);
 	(void) signal(SIGPIPE, trap);
-#ifndef SUNOS41
+/*
+ * Darwin: no SIGPWR (power-failure signal is a Sun/Linux extension).
+ * Guard on defined(SIGPWR) so the signal is only installed where the
+ * kernel actually delivers it. -- Heirloom Darwin port.
+ */
+#if !defined(SUNOS41) && defined(SIGPWR)
 	(void) signal(SIGPWR, trap);
 #endif
 

@@ -83,10 +83,13 @@
 
 /*
  * statvfs64 → statvfs. Darwin's statvfs already returns 64-bit sizes.
+ * Same for the *64 flavour typedefs (fsblkcnt64_t etc.).
  */
 #include <sys/statvfs.h>
 #define statvfs64	statvfs
 #define fstatvfs64	fstatvfs
+#define fsblkcnt64_t	fsblkcnt_t
+#define fsfilcnt64_t	fsfilcnt_t
 /*
  * struct statvfs64 → struct statvfs (token substitution: 'statvfs64'
  * expands to 'statvfs' in any context).
