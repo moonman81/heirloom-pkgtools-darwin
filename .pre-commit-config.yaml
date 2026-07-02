@@ -61,7 +61,12 @@ repos:
       - id: codespell
         args:
           - '--quiet-level=3'
-          - '--ignore-words-list=thru,dout,hist,inh,paket,ba,als,sav,inout,couldnt,fo,parm,parms,pris,typ,arithmetics,strat,masq,fram,manuel,mote,ded,alread,inout,als,strat,couldnt'
+          # Ignore-list. Two categories:
+          # - Genuinely legacy words in port docs (British spellings,
+          #   traditional abbreviations, Unix jargon).
+          # - Bell Labs / Heirloom tool names codespell mistakes for
+          #   typos (grap → grep/grape, oawk → awk, mpm, dpost, etc.).
+          - '--ignore-words-list=thru,dout,hist,inh,paket,ba,als,sav,inout,couldnt,fo,parm,parms,pris,typ,arithmetics,strat,masq,fram,manuel,mote,ded,alread,grap,oawk,nawk,mpm,dpost,checknr,soelim,picpack,vgrind,dircmp,tcopy,tapecntl,psrinfo,priocntl,mkfifo,fmtmsg,pathchk,getdents,getdirentries,fdopendir,setuid,setgid,pwd,gid,uid,groupadd,groupdel,useradd,userdel,filesize,ba'
         types_or: [markdown, shell, yaml, toml]
 
   # ---------- 3. Shell / config linting (pre-push stage) ----------
