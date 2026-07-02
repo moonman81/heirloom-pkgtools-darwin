@@ -1,0 +1,57 @@
+.\" heirloom-port-verify(7)
+.TH HEIRLOOM-PORT-VERIFY 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-verify \- post-install smoke tests
+.SH SYNOPSIS
+.B make verify
+.br
+.B sh scripts/verify.sh
+.RI "[" PREFIX "]"
+.SH DESCRIPTION
+Runs a package-specific set of smoke tests against the binaries
+installed under
+.IR PREFIX .
+Confirms presence of flagship executables and exercises core
+functionality without any assumptions about network or filesystem
+state beyond what
+.BR heirloom-port-install (7)
+produced.
+.PP
+Package-specific coverage:
+.PP
+.RS 4
+.IP "heirloom-sh" 4
+sh + jsh presence; basic echo; parameter expansion; pipelines;
+traditional Bourne enforcement ($(...) rejected, backticks work).
+.IP "heirloom-devtools" 4
+yacc + lex + m4 + make + sccs presence; yacc grammar-to-y.tab.c
+smoke; lex .l-to-lex.yy.c smoke; m4 macro expansion; make hello.
+.IP "heirloom-toolchest" 4
+Core utility presence; personality directories (s42, posix, posix2001,
+ucb) exist; oawk + nawk basic script; ISO 8601
+.BR date ;
+cpio + tar round-trip.
+.IP "heirloom-doctools" 4
+troff + nroff + tbl + eqn + pic + grap + refer + ptx + checknr +
+soelim presence;
+.B nroff -man
+formats a manual page; troff produces intermediate output.
+.IP "heirloom-pkgtools" 4
+All pkgcmd binaries present; pkgparam reads pkginfo; PKCS#12
+keystore round-trip via openssl(1) (PQ-ready: ML-KEM / ML-DSA /
+SLH-DSA accepted transparently).
+.IP "heirloom-workspace" 4
+Flagship binary from every phase present; full roundtrip suite from
+.I hardening/roundtrip/roundtrip.sh
+executes cleanly.
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Every smoke test passed.
+.TP
+.B >0
+One or more smoke tests failed; first failing test printed to stderr.
+.SH SEE ALSO
+.BR heirloom-port-install (7),
+.BR heirloom-port-lifecycle (7)

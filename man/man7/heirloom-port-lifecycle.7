@@ -1,0 +1,53 @@
+.\" heirloom-port-lifecycle(7)
+.TH HEIRLOOM-PORT-LIFECYCLE 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-lifecycle \- run the full port lifecycle in one command
+.SH SYNOPSIS
+.B make lifecycle
+.SH DESCRIPTION
+Runs
+.BR heirloom-port-bootstrap (7),
+.BR heirloom-port-configure (7),
+.B make build
+(delegates to upstream
+.IR makefile ),
+.BR heirloom-port-install (7),
+and
+.BR heirloom-port-verify (7)
+in sequence. Stops on the first failure with the failing stage's
+diagnostic.
+.PP
+Equivalent to:
+.PP
+.RS 4
+.EX
+make bootstrap && make configure && make build && \\
+make install && make verify
+.EE
+.RE
+.PP
+Best used for a first-time install on a fresh Darwin machine. For
+day-to-day rebuilds you usually only need
+.B make
++
+.BR "make install" .
+.SH ENVIRONMENT
+Inherits
+.B PREFIX
+and
+.B ROOT
+per
+.BR heirloom-port-install (7).
+.SH EXIT STATUS
+.TP
+.B 0
+All stages passed.
+.TP
+.B >0
+First failing stage's exit code.
+.SH SEE ALSO
+.BR heirloom-port-bootstrap (7),
+.BR heirloom-port-configure (7),
+.BR heirloom-port-install (7),
+.BR heirloom-port-verify (7),
+.BR heirloom-port-uninstall (7)

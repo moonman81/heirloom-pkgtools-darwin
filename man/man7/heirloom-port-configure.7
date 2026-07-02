@@ -1,0 +1,59 @@
+.\" heirloom-port-configure(7)
+.TH HEIRLOOM-PORT-CONFIGURE 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-configure \- validate environment before build
+.SH SYNOPSIS
+.B make configure
+.br
+.B sh scripts/configure.sh
+.SH DESCRIPTION
+Reports on the host environment and refuses to proceed if any hard
+prerequisite is missing. Non-destructive; makes no changes.
+.PP
+Checks performed:
+.PP
+.RS 4
+.IP \(bu 2
+Host OS + architecture (
+.BR sw_vers ,
+.BR uname -m ).
+.IP \(bu 2
+C toolchain: presence and version of
+.BR cc ,
+.BR make .
+.IP \(bu 2
+.BR yacc ,
+.BR lex
+availability (system flex/bison are acceptable; Heirloom devtools versions
+are preferred if installed).
+.IP \(bu 2
+.I /opt/heirloom
+existence + writability by the invoking user.
+.IP \(bu 2
+.I mk.config
+prefix declaration (or
+.I build/mk.config
+for the toolchest).
+.IP \(bu 2
+Companion Heirloom package presence per
+.IR scripts/prereqs-heirloom.txt .
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Environment is ready to build.
+.TP
+.B >0
+One or more hard prerequisites failed; details on stderr.
+.SH FILES
+.TP
+.I scripts/prereqs-heirloom.txt
+Companion package check-paths.
+.TP
+.I mk.config
+.TP
+.I build/mk.config
+Upstream build-configuration file (toolchest).
+.SH SEE ALSO
+.BR heirloom-port-bootstrap (7),
+.BR heirloom-port-install (7)

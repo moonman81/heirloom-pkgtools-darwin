@@ -104,6 +104,7 @@ build all:
 
 .PHONY: install
 install:
+	@sh scripts/install-man.sh '$(ROOT)$(PREFIX)' 2>/dev/null || true
 	@printf '$(C_BOLD)install$(C_RESET) — installing into $(ROOT)$(PREFIX)\n'
 	@$(MAKE) -f $(UPSTREAM_MK) install ROOT=$(ROOT)
 	@sh scripts/write-manifest.sh '$(PREFIX)' '$(PKG)'

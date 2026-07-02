@@ -1,0 +1,96 @@
+.\" heirloom-port-bootstrap(7) — Heirloom Darwin port ALM
+.\" Copyright (c) 2026 moonman81 (Heirloom Darwin port).
+.\" Placed in the public domain (zlib-style: use freely, retain notice).
+.TH HEIRLOOM-PORT-BOOTSTRAP 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-bootstrap \- install prerequisites for the Heirloom Packaging Tools Darwin port
+.SH SYNOPSIS
+.B make bootstrap
+.br
+.B sh scripts/bootstrap.sh
+.SH DESCRIPTION
+Installs everything the
+.B heirloom-pkgtools-darwin
+port needs to build on macOS / Darwin:
+.PP
+.RS 4
+.IP \(bu 2
+Verifies the Xcode Command Line Tools are installed. If missing, invokes
+the CLT installer and asks you to re-run
+.B make bootstrap
+after it completes.
+.IP \(bu 2
+Verifies Homebrew is installed. Refuses to auto-install brew (that is
+a policy decision that belongs to you). If missing, prints the
+canonical brew installer URL and stops.
+.IP \(bu 2
+Reads
+.I scripts/prereqs-brew.txt
+and installs every listed formula that is not already present. Idempotent.
+.IP \(bu 2
+Reads
+.I scripts/prereqs-brew-optional.txt
+(if present) and best-effort installs each formula; failures are
+non-fatal.
+.IP \(bu 2
+Installs
+.B pre-commit
+and wires up the git hooks (
+.B pre-commit install
++
+.B pre-commit install --hook-type pre-push
+).
+.IP \(bu 2
+Reads
+.I scripts/prereqs-heirloom.txt
+and verifies each companion Heirloom package is already installed at
+the expected path. Missing packages produce a warning with clone /
+build instructions.
+.IP \(bu 2
+Reports whether
+.I /opt/heirloom
+exists and is writable. If not, prints the exact
+.B sudo
+commands to create it once with the invoking user as owner.
+.RE
+.SH ENVIRONMENT
+None. All configuration lives in
+.I scripts/prereqs-*.txt
+files.
+.SH FILES
+.TP
+.I scripts/prereqs-brew.txt
+Required Homebrew formulae, one per line. Blank lines and lines
+starting with
+.B #
+are ignored.
+.TP
+.I scripts/prereqs-brew-optional.txt
+Optional Homebrew formulae. Failures are non-fatal.
+.TP
+.I scripts/prereqs-heirloom.txt
+Companion Heirloom package check-paths, format
+.BR pkg-name:/absolute/path .
+.SH IDEMPOTENCY
+Safe to re-run any number of times. Nothing is installed twice.
+.SH EXIT STATUS
+.TP
+.B 0
+All prerequisites satisfied.
+.TP
+.B >0
+Xcode CLT or Homebrew missing; user action required.
+.SH SEE ALSO
+.BR heirloom-port-configure (7),
+.BR heirloom-port-install (7),
+.BR heirloom-port-verify (7),
+.BR heirloom-port-lifecycle (7),
+.BR brew (1)
+.SH NOTES
+This is the port's own bootstrap script; the utilities inside the
+port itself (
+.BR sh (1),
+.BR cpio (1),
+.BR troff (1),
+etc.) have their own upstream man pages installed under
+.IR /opt/heirloom/share/man/5man .

@@ -1,0 +1,39 @@
+.\" heirloom-port-snapshot(7)
+.TH HEIRLOOM-PORT-SNAPSHOT 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-snapshot \- git-tag the current state as a release snapshot
+.SH SYNOPSIS
+.B make snapshot
+.SH DESCRIPTION
+Creates an annotated git tag of the form
+.B snapshot-YYYYMMDD-HHMMSSZ
+pointing at the current HEAD. Refuses if the working tree is dirty
+(commit or stash first).
+.PP
+Snapshot tags are automation-friendly release markers. Push them
+individually with
+.B git push origin <tag>
+or all at once with
+.BR "git push --tags" .
+.SH USE CASES
+.RS 4
+.IP \(bu 2
+Before running
+.B make test-manual
+to have a reproducible "before" reference.
+.IP \(bu 2
+Before applying an experimental patch series.
+.IP \(bu 2
+As a lightweight release marker when semantic-version tagging is
+not yet warranted.
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Tag created.
+.TP
+.B 1
+Working tree is dirty; tag not created.
+.SH SEE ALSO
+.BR git-tag (1),
+.BR heirloom-port-lifecycle (7)

@@ -1,0 +1,42 @@
+.\" heirloom-port-uninstall(7)
+.TH HEIRLOOM-PORT-UNINSTALL 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-uninstall \- reverse an install using the recorded manifest
+.SH SYNOPSIS
+.B make uninstall
+.SH DESCRIPTION
+Reads
+.I .install-manifest-\fIpkg\fP.txt
+and removes every listed file and symlink. Refuses to proceed if the
+manifest is missing (there is no safe way to know what to remove) or
+if the manifest contains any path outside
+.IR PREFIX .
+After the file / symlink removals, empty directories under
+.I PREFIX
+are pruned.
+.PP
+The manifest itself is left in place after uninstall for audit trail.
+Remove it by hand if desired.
+.SH SAFETY
+Refuses to run when the manifest is missing. Refuses paths outside
+.IR PREFIX .
+Never touches
+.IR /System ,
+.IR /usr ,
+or any Homebrew-managed path.
+.SH FILES
+.TP
+.I .install-manifest-\fIpkg\fP.txt
+Consumed input. Written by
+.BR heirloom-port-install (7).
+.SH EXIT STATUS
+.TP
+.B 0
+Uninstall complete or nothing to remove.
+.TP
+.B 1
+Manifest missing or contains paths outside
+.IR PREFIX .
+.SH SEE ALSO
+.BR heirloom-port-install (7),
+.BR heirloom-port-status (7)

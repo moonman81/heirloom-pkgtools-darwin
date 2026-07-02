@@ -1,0 +1,47 @@
+.\" heirloom-port-install(7)
+.TH HEIRLOOM-PORT-INSTALL 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-install \- install the port under a prefix + record a manifest
+.SH SYNOPSIS
+.B make install
+.RI "[" "PREFIX=/some/where" "] [" "ROOT=/staging" "]"
+.SH DESCRIPTION
+Delegates to the upstream
+.I makefile
+.B install
+target with
+.BR ROOT= " and " PREFIX=
+propagated. On completion,
+.I scripts/write-manifest.sh
+enumerates the files placed under
+.I ROOT/PREFIX
+and writes them to
+.I .install-manifest-\fIpkg\fP.txt
+at the repo root. The manifest is consumed by
+.BR heirloom-port-uninstall (7).
+.SH ENVIRONMENT
+.TP
+.B PREFIX
+Install prefix. Default
+.IR /opt/heirloom .
+.TP
+.B ROOT
+DESTDIR-style staging root. Default empty (install directly).
+.SH EXAMPLES
+.TP
+Install directly into /opt/heirloom:
+.B make install
+.TP
+Stage into a tarball root:
+.B make install ROOT=/tmp/pkgroot
+.SH FILES
+.TP
+.I .install-manifest-\fIpkg\fP.txt
+List of every file + symlink created under
+.IR PREFIX ,
+one path per line. Kept in the repo root for audit; consumed by
+.BR heirloom-port-uninstall (7).
+.SH SEE ALSO
+.BR heirloom-port-uninstall (7),
+.BR heirloom-port-verify (7),
+.BR heirloom-port-status (7)

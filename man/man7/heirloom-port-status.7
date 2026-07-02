@@ -1,0 +1,40 @@
+.\" heirloom-port-status(7)
+.TH HEIRLOOM-PORT-STATUS 7 "2026-07-02" "Heirloom Darwin port" "Port ALM"
+.SH NAME
+heirloom-port-status \- report repository, install, and prefix state
+.SH SYNOPSIS
+.B make status
+.SH DESCRIPTION
+Reports on three orthogonal axes for the current
+.B heirloom-pkgtools-darwin
+working copy:
+.PP
+.RS 4
+.IP "Repo state" 4
+Current HEAD SHA + subject; whether the working tree is dirty; any
+tag on HEAD.
+.IP "Installed state" 4
+Whether
+.I .install-manifest-\fIpkg\fP.txt
+is present; how many files it lists; how many are actually still
+present under
+.IR PREFIX .
+.IP "Prefix inventory" 4
+Per-directory entry counts under
+.IR PREFIX/bin ,
+.IR bin/s42 ,
+.IR bin/posix ,
+.IR bin/posix2001 ,
+.IR ucb ,
+.IR ccs/bin ,
+.IR lib ,
+.IR share/man/5man .
+.RE
+.PP
+Non-destructive; makes no changes.
+.SH EXIT STATUS
+Always
+.BR 0 .
+.SH SEE ALSO
+.BR heirloom-port-install (7),
+.BR heirloom-port-verify (7)
