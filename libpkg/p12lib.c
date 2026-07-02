@@ -80,9 +80,17 @@
 #include "p12lib.h"
 
 #ifndef B_TRUE
+/*
+ * Darwin port: Mach's <mach/mach_types.h> already typedefs boolean_t
+ * as an unsigned int. The pre-existing enum { _B_FALSE, _B_TRUE }
+ * conflicts. Skip on Darwin — Mach's boolean_t is compatible; supply
+ * only the B_TRUE / B_FALSE constants. -- Heirloom Darwin port.
+ */
+#if !defined(__APPLE__)
 typedef enum { _B_FALSE, _B_TRUE } boolean_t;
-#define B_TRUE  _B_TRUE
-#define B_FALSE _B_FALSE
+#endif
+#define B_TRUE  1
+#define B_FALSE 0
 #endif
 
 /*
@@ -684,8 +692,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
 				SUNWerr(SUNW_F_PKCS12_CREATE, SUNW_R_CERT_ERR);
 				goto err_ret;
 			}
-			if (cert->aux != NULL && cert->aux->alias != NULL &&
-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
+			if (heirloom_x509_aux_has_alias(cert)) {
 				str = utf82ascstr(cert->aux->alias);
 				if (str == NULL) {
 					/*
@@ -701,10 +708,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
 					goto err_ret;
 				}
 			}
-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
-				str = cert->aux->keyid->data;
-				len = cert->aux->keyid->length;
+			if (heirloom_x509_aux_has_keyid(cert)) {
+				str = heirloom_x509_aux_keyid_data(cert);
+				len = heirloom_x509_aux_keyid_length(cert);
 
 				if (str != NULL &&
 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
@@ -733,8 +739,7 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
 				goto err_ret;
 			}
 
-			if (cert->aux != NULL && cert->aux->alias != NULL &&
-			    cert->aux->alias->type == V_ASN1_UTF8STRING) {
+			if (heirloom_x509_aux_has_alias(cert)) {
 				str = utf82ascstr(cert->aux->alias);
 				if (str == NULL) {
 					/*
@@ -750,10 +755,9 @@ sunw_PKCS12_create(const char *pass, STACK_OF(EVP_PKEY) *pkeys,
 					goto err_ret;
 				}
 			}
-			if (cert->aux != NULL && cert->aux->keyid != NULL &&
-			    cert->aux->keyid->type == V_ASN1_OCTET_STRING) {
-				str = cert->aux->keyid->data;
-				len = cert->aux->keyid->length;
+			if (heirloom_x509_aux_has_keyid(cert)) {
+				str = heirloom_x509_aux_keyid_data(cert);
+				len = heirloom_x509_aux_keyid_length(cert);
 
 				if (str != NULL &&
 				    PKCS12_add_localkeyid(bag, str, len) == 0) {
@@ -2352,37 +2356,47 @@ asc2bmpstring(const char *str, int len)
 static unsigned char *
 utf82ascstr(ASN1_UTF8STRING *ustr)
 {
-	ASN1_STRING tmpstr;
-	ASN1_STRING *astr = &tmpstr;
+	/*
+	 * OpenSSL 3.x port: ASN1_STRING is opaque, so use accessors
+	 * throughout. Also use ASN1_STRING_new()/free() instead of a
+	 * stack-allocated tmpstr. ASN1_mbstring_copy() writes into the
+	 * out-param which we then extract via ASN1_STRING_get0_data() +
+	 * ASN1_STRING_length(). -- Heirloom Darwin port (Phase 5-C4).
+	 */
+	ASN1_STRING *astr = NULL;
 	unsigned char *retstr = NULL;
-	int mbflag;
-	int ret;
+	int mbflag, ret, len;
+	const unsigned char *data;
 
-	if (ustr == NULL || ustr->type != V_ASN1_UTF8STRING) {
+	if (ustr == NULL || ASN1_STRING_type(ustr) != V_ASN1_UTF8STRING) {
 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_INVALID_ARG);
 		return (NULL);
 	}
 
 	mbflag = MBSTRING_ASC;
-	tmpstr.data = NULL;
-	tmpstr.length = 0;
 
-	ret = ASN1_mbstring_copy(&astr, ustr->data, ustr->length, mbflag,
+	ret = ASN1_mbstring_copy(&astr,
+	    ASN1_STRING_get0_data(ustr), ASN1_STRING_length(ustr), mbflag,
 	    B_ASN1_IA5STRING);
 	if (ret < 0) {
 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_STR_CONVERT_ERR);
+		ASN1_STRING_free(astr);
 		return (NULL);
 	}
 
-	retstr = OPENSSL_malloc(astr->length + 1);
+	len = ASN1_STRING_length(astr);
+	data = ASN1_STRING_get0_data(astr);
+
+	retstr = OPENSSL_malloc((size_t)len + 1);
 	if (retstr == NULL) {
 		SUNWerr(SUNW_F_UTF82ASCSTR, SUNW_R_MEMORY_FAILURE);
+		ASN1_STRING_free(astr);
 		return (NULL);
 	}
 
-	(void) memcpy(retstr, astr->data, astr->length);
-	retstr[astr->length] = '\0';
-	OPENSSL_free(astr->data);
+	(void) memcpy(retstr, data, (size_t)len);
+	retstr[len] = '\0';
+	ASN1_STRING_free(astr);
 
 	return (retstr);
 }

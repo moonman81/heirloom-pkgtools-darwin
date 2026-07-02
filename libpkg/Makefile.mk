@@ -5,22 +5,24 @@ INC = -I. -I../hdrs -I../libgendb
 
 
 #
-# Darwin port: OpenSSL-touching TUs (security, p12lib, keystore,
-# pkgweb) currently route through darwin_openssl_stubs.o — signed
-# packages + web install return "not supported" at runtime cleanly.
-# hdrs/openssl3_compat.h is in place as scaffolding for a future
-# full OpenSSL 3.x port (Phase 5-C4 in the task list): DEFINE_STACK_OF,
-# SKM_sk_* macro compat, and PKCS12/X509 accessor migration guidance.
-# darwin_pwgr.o supplies fgetpwent/fgetgrent for ncgrpw.o.
+# Darwin port (Phase 5-C4): security.c, keystore.c, pkgweb.c compile
+# against OpenSSL 3.x via hdrs/openssl3_compat.h. p12lib.c is
+# replaced by p12lib_openssl3.c — a fresh accessor-only OpenSSL 3.x
+# implementation of the sunw_ API surface that pkgadd/pkgrm consume.
+# Algorithm-agnostic: works with classical (RSA/DSA/EC) AND
+# post-quantum (ML-KEM, ML-DSA, SLH-DSA) keys OpenSSL 3.5+ ships
+# natively — see PORT.md §5-C4. darwin_openssl_stubs.o retains
+# strip_port + pkg_passphrase_cb symbols that pkgweb.c does not
+# currently emit under a stub build.
 # -- Heirloom Darwin port.
 #
 OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \
-	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o \
+	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o keystore.o \
 	logerr.o mappath.o ncgrpw.o nhash.o pkgerr.o \
-	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o \
+	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o pkgweb.o \
 	pkgxpand.o ppkgmap.o progerr.o putcfile.o rrmdir.o runcmd.o \
-	srchcfile.o tputcfent.o verify.o vfpops.o \
-	darwin_openssl_stubs.o darwin_pwgr.o
+	security.o srchcfile.o tputcfent.o verify.o vfpops.o \
+	p12lib_openssl3.o darwin_pwgr.o darwin_openssl_stubs.o
 
 all: libpkg.a
 
