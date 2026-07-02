@@ -1,0 +1,4 @@
+# Homebrew formulae required to build heirloom-pkgtools.
+# openssl@3 provides PKCS#12 handling + post-quantum crypto (ML-KEM,
+# ML-DSA, SLH-DSA, hybrids) for p12lib_openssl3.c.
+openssl@3

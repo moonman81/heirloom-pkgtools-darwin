@@ -1,0 +1,4 @@
+# Companion Heirloom packages required BEFORE pkgtools.
+sh:/opt/heirloom/bin/sh
+devtools-lex:/opt/heirloom/ccs/bin/lex
+toolchest-cpio:/opt/heirloom/bin/cpio
