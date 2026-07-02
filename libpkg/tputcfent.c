@@ -159,7 +159,15 @@ tputcfent(struct cfent *ept, FILE *fp)
 			strftime(timeb, sizeof (timeb),
 			    pkg_gt("Expected last modification: %b %d %X %Y\n"),
 			    timep);
-			(void) fprintf(fp, timeb);
+			/*
+			 * CWE-134: timeb was produced by strftime() and can
+			 * contain literal characters from the locale-
+			 * translated format string. Any '%' surviving into
+			 * timeb (e.g. from a hostile translation catalogue)
+			 * would be re-interpreted by fprintf. Use %s.
+			 * -- Heirloom Darwin hardening.
+			 */
+			(void) fprintf(fp, "%s", timeb);
 		} else
 			(void) fprintf(fp,
 			    pkg_gt("Expected last modification: ?\n"));

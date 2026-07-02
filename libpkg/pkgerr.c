@@ -113,7 +113,12 @@ pkgerr_dump(PKG_ERR *err, FILE *fp)
 	int i;
 
 	for (i = 0; i < err->nerrs; i++) {
-		(void) fprintf(fp, err->msgs[i]);
+		/*
+		 * CWE-134: err->msgs[i] may originate from package metadata
+		 * or filenames — attacker-controllable at pkgadd time. Use
+		 * a literal format. -- Heirloom Darwin hardening.
+		 */
+		(void) fprintf(fp, "%s", err->msgs[i]);
 	}
 	return (0);
 }
