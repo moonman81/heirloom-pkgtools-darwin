@@ -2777,13 +2777,18 @@ int
 convert_pkginfo_to_sql(struct dstr *pd, FILE *fp, const char *pkg)
 {
 	int result = 0; /* Nothing is wrong yet. */
-	int true = 1;
+	/*
+	 * Darwin/C23 clang port: 'true' became a reserved keyword in C23.
+	 * Rename the sentinel to avoid a syntax error; keep the same
+	 * behaviour (infinite loop). -- Heirloom Darwin port.
+	 */
+	int loop_forever = 1;
 	char param[1024];
 	char value[1024];
 	char *copy, ch, *mempt = NULL;
 	int c, n, escape, begline, quoted, seqno = 0;
 
-	while (true) {
+	while (loop_forever) {
 		(void) memset(param, 0, 1024);
 		(void) memset(value, 0, 1024);
 

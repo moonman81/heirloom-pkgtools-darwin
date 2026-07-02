@@ -35,6 +35,14 @@
 #include <string.h>
 #include <sys/types.h>
 
+#if !defined(__APPLE__)
+/*
+ * Darwin: strlcpy(3) is provided by libc and fortify-wrapped via
+ * __builtin___strlcpy_chk. Redefining it here collides with the
+ * fortify macro. Skip on Darwin — libc's implementation is
+ * behaviourally equivalent. -- Heirloom Darwin port.
+ */
+
 /*
  * Copies src to the dstsize buffer at dst. The copy will never
  * overflow the destination buffer and the buffer will always be null
@@ -58,3 +66,4 @@ strlcpy(char *dst, const char *src, size_t len)
 	dst[copied] = '\0';
 	return (slen);
 }
+#endif	/* !__APPLE__ */

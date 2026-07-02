@@ -145,7 +145,15 @@ extern int	ckstr __P((char *strval, char *regexp[], int length,
 extern int	cktime_val __P((char *fmt, char *input));
 extern int	cktime_err __P((char *fmt, char *error));
 extern int	cktime_hlp __P((char *fmt, char *help));
+#if !defined(__APPLE__)
+/*
+ * Darwin: fmtcheck(3) is a libc function with signature
+ * (const char *user_fmt, const char *default_fmt) returning const char *.
+ * Skip the pkgtools declaration on Darwin — libc provides it.
+ * -- Heirloom Darwin port.
+ */
 extern int	fmtcheck __P((char *fmt));
+#endif
 extern int	cktime __P((char *tod, char *fmt, char *defstr, char *error,
 				char *help, char *prompt));
 
@@ -333,8 +341,16 @@ extern int	write_vtoc __P((int fd, struct vtoc *vtoc));
 /*
  * from OpenSolaris libc
  */
+#if !defined(__APPLE__)
+/*
+ * Darwin: strlcat(3) and strlcpy(3) are libc functions provided via
+ * <string.h> and taste-guarded by fortify macros. The OpenSolaris
+ * declaration collides with the __builtin___strlcpy_chk fortify
+ * expansion. Skip on Darwin. -- Heirloom Darwin port.
+ */
 extern size_t	strlcat(char *, const char *, size_t);
 extern size_t	strlcpy(char *, const char *, size_t);
+#endif
 extern void	closefrom(int);
 extern int	sigsend(idtype_t, id_t, int);
 extern int	cftime(char *, char *, const time_t *);

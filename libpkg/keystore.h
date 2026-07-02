@@ -50,9 +50,18 @@ extern "C" {
 #include "pkgerr.h"
 
 #ifndef B_TRUE
+/*
+ * Darwin port: Mach headers already typedef 'boolean_t' as an unsigned
+ * int; redefining it as an enum triggers a type-mismatch error even
+ * though the numeric values agree. Skip the typedef on Darwin — Mach's
+ * boolean_t supplies the type. Keep the B_TRUE/B_FALSE constants.
+ * -- Heirloom Darwin port.
+ */
+#if !defined(__APPLE__)
 typedef enum { _B_FALSE, _B_TRUE } boolean_t;
-#define B_TRUE  _B_TRUE
-#define B_FALSE _B_FALSE
+#endif
+#define B_TRUE  1
+#define B_FALSE 0
 #endif
 
 /* keystore structures */

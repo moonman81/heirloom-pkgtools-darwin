@@ -35,6 +35,13 @@
 #include <string.h>
 #include <sys/types.h>
 
+#if !defined(__APPLE__)
+/*
+ * Darwin: strlcat(3) is provided by libc and fortify-wrapped via
+ * __builtin___strlcat_chk. Redefining it here collides with the
+ * fortify macro. Skip on Darwin. -- Heirloom Darwin port.
+ */
+
 /*
  * Appends src to the dstsize buffer at dst. The append will never
  * overflow the destination buffer and the buffer will always be null
@@ -62,3 +69,4 @@ strlcat(char *dst, const char *src, size_t dstsize)
 	dst[l1+copied] = '\0';
 	return (l1 + l2);
 }
+#endif	/* !__APPLE__ */

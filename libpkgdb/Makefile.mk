@@ -7,7 +7,16 @@ OBJ = attach.o auth.o btree.o btree_rb.o build.o copy.o delete.o \
 	pragma.o printf.o random.o select.o shell.o table.o tokenize.o \
 	trigger.o update.o util.o vacuum.o vdbe.o where.o parse.o opcodes.o
 
-OBJ =
+#
+# Heirloom pkgtools disables the bundled SQLite (see top-level README:
+# "features recently introduced by Sun are partially disabled ...;
+# this applies to SQLite ..."). Original code cleared OBJ = to keep
+# the disabled sources out of the archive. On Darwin, ar(1) rejects a
+# zero-member archive with "no archive members specified"; GNU ar
+# accepts it. Use a single placeholder TU to keep libpkgdb.a valid
+# and semantically empty. -- Heirloom Darwin port.
+#
+OBJ = darwin_placeholder.o
 
 GENERATED = def_ptr_sz config.h parse.h parse.c lempar.c lemon opcodes.c opcodes.h
 

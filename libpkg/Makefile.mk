@@ -4,12 +4,21 @@ INC = -I. -I../hdrs -I../libgendb
 	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INC) $(PATHS) $(WARN) $<
 
 
+#
+# Darwin port: swap the four OpenSSL-touching TUs (security, p12lib,
+# keystore, pkgweb) for a single stub file. Upstream marks these as
+# "partially disabled in this variant" (see pkgtools README); they
+# also fail to build against OpenSSL 3.x. darwin_pwgr.o supplies
+# fgetpwent/fgetgrent for ncgrpw.o. See PORT.md deviation register.
+# -- Heirloom Darwin port.
+#
 OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \
-	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o keystore.o \
+	dstream.o fmkdir.o gpkglist.o gpkgmap.o isdir.o \
 	logerr.o mappath.o ncgrpw.o nhash.o pkgerr.o \
-	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o pkgweb.o \
+	pkgexecl.o pkgexecv.o pkgmount.o pkgstr.o pkgtrans.o \
 	pkgxpand.o ppkgmap.o progerr.o putcfile.o rrmdir.o runcmd.o \
-	security.o srchcfile.o tputcfent.o verify.o vfpops.o
+	srchcfile.o tputcfent.o verify.o vfpops.o \
+	darwin_openssl_stubs.o darwin_pwgr.o
 
 all: libpkg.a
 
