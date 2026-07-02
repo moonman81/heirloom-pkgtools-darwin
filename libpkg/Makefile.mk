@@ -5,11 +5,13 @@ INC = -I. -I../hdrs -I../libgendb
 
 
 #
-# Darwin port: swap the four OpenSSL-touching TUs (security, p12lib,
-# keystore, pkgweb) for a single stub file. Upstream marks these as
-# "partially disabled in this variant" (see pkgtools README); they
-# also fail to build against OpenSSL 3.x. darwin_pwgr.o supplies
-# fgetpwent/fgetgrent for ncgrpw.o. See PORT.md deviation register.
+# Darwin port: OpenSSL-touching TUs (security, p12lib, keystore,
+# pkgweb) currently route through darwin_openssl_stubs.o — signed
+# packages + web install return "not supported" at runtime cleanly.
+# hdrs/openssl3_compat.h is in place as scaffolding for a future
+# full OpenSSL 3.x port (Phase 5-C4 in the task list): DEFINE_STACK_OF,
+# SKM_sk_* macro compat, and PKCS12/X509 accessor migration guidance.
+# darwin_pwgr.o supplies fgetpwent/fgetgrent for ncgrpw.o.
 # -- Heirloom Darwin port.
 #
 OBJ = canonize.o ckparam.o ckvolseq.o cvtpath.o dbsql.o devtype.o \

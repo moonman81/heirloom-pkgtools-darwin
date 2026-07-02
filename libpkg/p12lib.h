@@ -73,6 +73,13 @@
 #include <openssl/pem.h>
 
 /*
+ * OpenSSL 3.x compatibility: the openssl3_compat header supplies the
+ * SKM_sk_* macros this file's callers use, plus DEFINE_STACK_OF for
+ * STACK_OF(EVP_PKEY). -- Heirloom Darwin port (Phase 5-C4).
+ */
+#include "openssl3_compat.h"
+
+/*
  * PKCS12 file routines borrowed from SNT's libwanboot.
  */
 
@@ -80,8 +87,14 @@
 extern "C" {
 #endif
 
-/* These declarations allow us to make stacks of EVP_PKEY objects */
+/*
+ * Under OpenSSL 3.x, DEFINE_STACK_OF(EVP_PKEY) in openssl3_compat.h
+ * has already generated the STACK_OF(EVP_PKEY) type + sk_EVP_PKEY_*
+ * inline wrappers, so the original DECLARE_STACK_OF is redundant.
+ */
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 DECLARE_STACK_OF(EVP_PKEY)
+#endif
 #define	sk_EVP_PKEY_new_null() SKM_sk_new_null(EVP_PKEY)
 #define	sk_EVP_PKEY_free(st) SKM_sk_free(EVP_PKEY, (st))
 #define	sk_EVP_PKEY_num(st) SKM_sk_num(EVP_PKEY, (st))
