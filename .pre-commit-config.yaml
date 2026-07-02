@@ -46,7 +46,15 @@ repos:
       - id: check-symlinks
       - id: destroyed-symlinks
 
-  # ---------- 2. Typo check on changed lines (fast) ----------
+  # ---------- 2. Typo check — docs + shell only ----------
+  # Upstream Heirloom C code has many pre-existing typos accumulated
+  # over decades ("onw"/own, "reserv"/reserve, "occured"/occurred,
+  # "specifed"/specified, etc.). Fixing them would violate the
+  # "don't reflow upstream style" discipline in CONTRIBUTING.md,
+  # which preserves diff-blame back to Gunnar Ritter and the original
+  # Bell Labs / OpenSolaris authors. Restrict codespell to files the
+  # port itself authored: Markdown docs, shell scripts, YAML, and
+  # config text.
   - repo: https://github.com/codespell-project/codespell
     rev: v2.3.0
     hooks:
@@ -54,12 +62,7 @@ repos:
         args:
           - '--quiet-level=3'
           - '--ignore-words-list=thru,dout,hist,inh,paket,ba,als,sav,inout,couldnt,fo,parm,parms,pris,typ,arithmetics,strat,masq,fram,manuel,mote,ded,alread,inout,als,strat,couldnt'
-        exclude: |
-          (?x)^(
-            LICENSE|
-            LICENSE/.*|
-            .*\.(patch|diff|afm|dic|ps|1|1b|1m|3|5|7)$
-          )$
+        types_or: [markdown, shell, yaml, toml]
 
   # ---------- 3. Shell / config linting (pre-push stage) ----------
   - repo: https://github.com/shellcheck-py/shellcheck-py
