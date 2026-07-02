@@ -1,0 +1,63 @@
+# gitattributes — line-ending + binary-file discipline
+#
+# Preserves upstream K&R / traditional Unix conventions: LF line
+# endings everywhere; binary declarations for archives + fonts so
+# they are not treated as text.
+
+* text=auto eol=lf
+
+# Explicit LF for source and text files (defensive)
+*.c    text eol=lf
+*.h    text eol=lf
+*.cc   text eol=lf
+*.y    text eol=lf
+*.l    text eol=lf
+*.sh   text eol=lf
+*.ksh  text eol=lf
+*.awk  text eol=lf
+*.sed  text eol=lf
+*.mk   text eol=lf
+Makefile* text eol=lf
+makefile text eol=lf
+mk.config text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.in   text eol=lf
+
+# Manual pages (troff)
+*.1    text eol=lf
+*.1b   text eol=lf
+*.1m   text eol=lf
+*.3    text eol=lf
+*.5    text eol=lf
+*.7    text eol=lf
+*.me   text eol=lf
+*.mm   text eol=lf
+*.tr   text eol=lf
+
+# Binaries — preserved verbatim
+*.afm  binary
+*.dic  binary
+*.ps   binary
+*.pdf  binary
+*.tar  binary
+*.tar.bz2 binary
+*.gz   binary
+*.bz2  binary
+*.zip  binary
+*.png  binary
+*.jpg  binary
+*.gif  binary
+
+# Archive-format regression artefacts — kept as binary blobs
+*.cpio binary
+
+# Do not diff generated code
+*.tab.c linguist-generated
+lex.yy.c linguist-generated
+
+# Do not count upstream vendor code toward language stats
+LICENSE/**   linguist-documentation
+LICENSE      linguist-documentation
+NOTICE.md    linguist-documentation
+AI-DISCLOSURE.md linguist-documentation

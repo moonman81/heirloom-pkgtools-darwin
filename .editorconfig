@@ -1,0 +1,36 @@
+# EditorConfig — https://editorconfig.org
+#
+# Preserves the K&R / traditional Unix conventions of the upstream
+# Heirloom code: tabs for indent, no trailing whitespace, LF line
+# endings, UTF-8. Do not enforce a max line length — upstream code
+# routinely exceeds 80 cols and rewrapping would break the diff
+# blame back to Gunnar Ritter.
+
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+indent_style = tab
+indent_size = 8
+
+[*.md]
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 2
+
+[*.yml]
+indent_style = space
+indent_size = 2
+
+[*.yaml]
+indent_style = space
+indent_size = 2
+
+[Makefile*]
+indent_style = tab
+
+[makefile]
+indent_style = tab

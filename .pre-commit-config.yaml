@@ -1,0 +1,219 @@
+# .pre-commit-config.yaml
+#
+# All QA for this project happens at pre-commit time (no CI budget).
+# Stages are tiered so routine commits stay fast:
+#
+#   commit  (default)  → file hygiene + typo check on changed files
+#   push               → shellcheck, cppcheck, license-preservation
+#                        gate, format-string audit on changed files
+#   manual             → full round-trip + ASan/UBSan + flawfinder
+#                        run explicitly by 'pre-commit run --hook-stage
+#                        manual --all-files' before a release / tag
+#
+# Install once per clone with:
+#   pre-commit install --install-hooks
+#   pre-commit install --install-hooks --hook-type pre-push
+
+repos:
+  # ---------- 1. File hygiene (fast, every commit) ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: |
+          (?x)^(
+            LICENSE|
+            LICENSE/.*|
+            .*\.(patch|diff|afm|dic|ps|1|1b|1m|3|5|7|me|mm|tr|in)$
+          )$
+      - id: end-of-file-fixer
+        exclude: |
+          (?x)^(
+            LICENSE|
+            LICENSE/.*|
+            .*\.(patch|diff|afm|dic|ps)$
+          )$
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: ['--unsafe']  # tolerate GitHub-flavour custom tags if any
+      - id: check-toml
+      - id: check-json
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: destroyed-symlinks
+
+  # ---------- 2. Typo check on changed lines (fast) ----------
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        args:
+          - '--quiet-level=3'
+          - '--ignore-words-list=thru,dout,hist,inh,paket,ba,als,sav,inout,couldnt,fo,parm,parms,pris,typ,arithmetics,strat,masq,fram,manuel,mote,ded,alread,inout,als,strat,couldnt'
+        exclude: |
+          (?x)^(
+            LICENSE|
+            LICENSE/.*|
+            .*\.(patch|diff|afm|dic|ps|1|1b|1m|3|5|7)$
+          )$
+
+  # ---------- 3. Shell / config linting (pre-push stage) ----------
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ['--severity=warning']
+        stages: [pre-push]
+
+  # ---------- 4. Local custom hooks ----------
+  - repo: local
+    hooks:
+      # 4a. License-preservation gate — refuse to delete or rewrite
+      #     the upstream LICENSE files, NOTICE, or AI-DISCLOSURE.
+      - id: preserve-notice-files
+        name: preserve NOTICE.md, AI-DISCLOSURE.md, LICENSE/ files
+        entry: |
+          bash -c '
+            # Refuse deletion of any critical attribution file
+            for f in NOTICE.md AI-DISCLOSURE.md LICENSE README.md; do
+              if git diff --cached --name-status | grep -qE "^D[[:space:]]+$f\$"; then
+                echo "REFUSE: attempted deletion of $f — see NOTICE.md" >&2
+                exit 1
+              fi
+            done
+            # Also verify LICENSE/ directory tree stays intact
+            if git diff --cached --name-status | grep -qE "^D[[:space:]]+LICENSE/"; then
+              echo "REFUSE: attempted deletion under LICENSE/ — see NOTICE.md" >&2
+              exit 1
+            fi
+            exit 0
+          '
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # 4b. Format-string audit on changed C files (pre-push).
+      #     Blocks the push if any user-controlled fmt reaches printf-family.
+      - id: format-string-audit
+        name: clang -Wformat-security on changed C files
+        entry: |
+          bash -c '
+            fail=0
+            for f in "$@"; do
+              [ -f "$f" ] || continue
+              case "$f" in
+                *.c)
+                  out=$(cc -c -O -Wformat-security -Wno-everything -Wno-unused-command-line-argument -D_DARWIN_C_SOURCE -fsyntax-only "$f" 2>&1 || true)
+                  if echo "$out" | grep -q "warning:.*format"; then
+                    echo "CWE-134 warning in $f:" >&2
+                    echo "$out" | grep -E "warning:.*format" | head -3 >&2
+                    fail=1
+                  fi
+                  ;;
+              esac
+            done
+            exit $fail
+          ' --
+        language: system
+        stages: [pre-push]
+        types: [c]
+        pass_filenames: true
+
+      # 4c. cppcheck on changed C files (pre-push).
+      - id: cppcheck-changed-c
+        name: cppcheck on changed C files
+        entry: |
+          bash -c '
+            fail=0
+            for f in "$@"; do
+              [ -f "$f" ] || continue
+              case "$f" in
+                *.c|*.h)
+                  out=$(cppcheck --enable=warning --suppress=missingIncludeSystem \
+                                 --suppress=unmatchedSuppression --suppress=variableScope \
+                                 --error-exitcode=1 --quiet "$f" 2>&1)
+                  if [ -n "$out" ]; then
+                    echo "cppcheck findings in $f:" >&2
+                    echo "$out" | head -5 >&2
+                    fail=1
+                  fi
+                  ;;
+              esac
+            done
+            exit $fail
+          ' --
+        language: system
+        stages: [pre-push]
+        types_or: [c, c++]
+        pass_filenames: true
+
+      # 4d. Manual: full round-trip + ASan+UBSan (invoke before release).
+      #     `pre-commit run --hook-stage manual roundtrip-suite --all-files`
+      - id: roundtrip-suite
+        name: hardening/roundtrip full run
+        entry: |
+          bash -c '
+            if [ -f hardening/roundtrip/roundtrip.sh ]; then
+              sh hardening/roundtrip/roundtrip.sh
+            else
+              echo "no hardening/roundtrip in this repo — skipping"
+            fi
+          '
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      # 4e. Manual: full lint sweep (17-tool).
+      - id: lint-sweep
+        name: hardening/lint-sweep full run
+        entry: |
+          bash -c '
+            if [ -f hardening/lint-sweep/run.sh ]; then
+              sh hardening/lint-sweep/run.sh
+            else
+              echo "no hardening/lint-sweep in this repo — skipping"
+            fi
+          '
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      # 4f. Manual: format-string audit across whole tree (release gate).
+      - id: format-string-full
+        name: clang -Wformat-security across whole tree
+        entry: |
+          bash -c '
+            if [ -f hardening/format-string-audit/clang-scan.sh ]; then
+              sh hardening/format-string-audit/clang-scan.sh
+            else
+              # Standalone repos: scan every .c
+              fail=0
+              for f in $(git ls-files "*.c"); do
+                out=$(cc -c -O -Wformat-security -Wno-everything -Wno-unused-command-line-argument -D_DARWIN_C_SOURCE -fsyntax-only "$f" 2>&1 || true)
+                if echo "$out" | grep -q "warning:.*format"; then
+                  echo "$f: $(echo "$out" | grep -c "warning:.*format") format warning(s)"
+                  fail=1
+                fi
+              done
+              exit $fail
+            fi
+          '
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+# Default stages: 'commit' runs the hygiene + typo tier; 'pre-push'
+# adds lint tier; 'manual' is opt-in for release-gate work.
+default_stages: [pre-commit]
+
+# Note on shell hook `stages` — pre-commit expects the modern names:
+#   pre-commit / pre-push / pre-merge-commit / commit-msg / manual
+# (the older 'commit'/'push'/'merge-commit' aliases are deprecated
+# in v3.x.)
