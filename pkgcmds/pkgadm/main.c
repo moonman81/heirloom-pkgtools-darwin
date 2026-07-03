@@ -48,6 +48,7 @@
 #include "pkgerr.h"
 #include "keystore.h"
 #include "pkgadm_msgs.h"
+#include "heirloom_flags.h"
 
 /* initial error message buffer size */
 
@@ -94,6 +95,7 @@ static struct cmd {
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "pkgadm", 0);
 	char	cur_cmd;
 	int	newargc;
 	char	**newargv;

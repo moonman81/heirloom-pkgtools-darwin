@@ -48,6 +48,7 @@
 #include <pkglocs.h>
 #include <libadm.h>
 #include <libinst.h>
+#include "heirloom_flags.h"
 
 static int	options;
 static keystore_handle_t	keystore = NULL;
@@ -66,6 +67,7 @@ static void	trap(int signo);
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgtrans", HF_VERBOSE_TAKEN);
 	int	c;
 	void	(*func)(int);
 	extern char	*optarg;

@@ -54,6 +54,7 @@
 #include <libadm.h>
 #include <libinst.h>
 #include "installf.h"
+#include "heirloom_flags.h"
 
 #define	BASEDIR	"/BASEDIR/"
 
@@ -137,6 +138,7 @@ extern void set_limit(void);
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "installf", HF_VERBOSE_TAKEN);
 	FILE		*pp;
 	VFP_T		*cfTmpVfp;
 	VFP_T		*cfVfp;

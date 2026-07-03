@@ -51,6 +51,7 @@
 #include <pkglib.h>
 #include "libadm.h"
 #include "libinst.h"
+#include "heirloom_flags.h"
 
 extern int	holdcinfo;
 
@@ -95,6 +96,7 @@ static void	usage(void);
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgproto", HF_VERBOSE_TAKEN);
 	int c;
 	char *pt, path[PATH_MAX];
 	char	*abi_sym_ptr;

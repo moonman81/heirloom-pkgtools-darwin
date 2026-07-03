@@ -18,6 +18,7 @@
 ** from Id: encode.c,v 1.9 2003/06/28 16:25:34 drh Exp
 */
 #include <string.h>
+#include "heirloom_flags.h"
 
 /*
 ** How This Encoder Works
@@ -43,7 +44,7 @@
 ** We would prefer to keep the size of the encoded string smaller than
 ** this.
 **
-** To minimize the encoding size, we first add a fixed offset value to each 
+** To minimize the encoding size, we first add a fixed offset value to each
 ** byte in the sequence.  The addition is modulo 256.  (That is to say, if
 ** the sum of the original character value and the offset exceeds 256, then
 ** the higher order bits are truncated.)  The offset is chosen to minimize
@@ -52,7 +53,7 @@
 ** characters, the offset might be 0x01.  Each of the 0x27 characters would
 ** then be converted into an 0x28 character which would not need to be
 ** escaped at all and so the 100 character input string would be converted
-** into just 100 characters of output.  Actually 101 characters of output - 
+** into just 100 characters of output.  Actually 101 characters of output -
 ** we have to record the offset used as the first byte in the sequence so
 ** that the string can be decoded.  Since the offset value is stored as
 ** part of the output string and the output string is not allowed to contain
@@ -75,7 +76,7 @@
 **
 ** Decoding is obvious:
 **
-**     (5)   Copy encoded characters except the first into the decode 
+**     (5)   Copy encoded characters except the first into the decode
 **           buffer.  Set the first encoded character aside for use as
 **           the offset in step 7 below.
 **
@@ -101,7 +102,7 @@
 
 /*
 ** Encode a binary buffer "in" of size n bytes so that it contains
-** no instances of characters '\'' or '\000'.  The output is 
+** no instances of characters '\'' or '\000'.  The output is
 ** null-terminated and can be used as a string value in an INSERT
 ** or UPDATE statement.  Use sqlite_decode_binary() to convert the
 ** string back into its original binary.
@@ -196,6 +197,7 @@ int sqlite_decode_binary(const unsigned char *in, unsigned char *out){
 ** and run the result.
 */
 int main(int argc, char **argv){
+	heirloom_flags(argc, argv, "libpkgdb", 0);
   int i, j, n, m, nOut;
   unsigned char in[30000];
   unsigned char out[33000];

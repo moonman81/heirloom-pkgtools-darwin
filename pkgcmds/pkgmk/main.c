@@ -63,6 +63,7 @@
 #include <pkglib.h>
 #include <libadm.h>
 #include <libinst.h>
+#include "heirloom_flags.h"
 
 #undef	P_tmpdir
 #define	P_tmpdir	"/var/tmp/"
@@ -165,6 +166,7 @@ static int	slinkf(char *from, char *to);
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgmk", HF_VERBOSE_TAKEN);
 	struct utsname utsbuf;
 	struct statvfs64 svfsb;
 	struct cfent	**eptlist;

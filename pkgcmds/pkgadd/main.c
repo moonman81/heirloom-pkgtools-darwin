@@ -96,6 +96,7 @@
  */
 
 #include "quit.h"
+#include "heirloom_flags.h"
 
 #undef	P_tmpdir
 #define	P_tmpdir	"/var/tmp/"
@@ -329,6 +330,7 @@ static boolean_t	unpack_and_check_packages(char **a_pkgList,
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "pkgadd", HF_VERBOSE_TAKEN);
 	extern int	resolvepath(const char *path, char *buf, size_t bufsiz);
 	PKG_ERR			*err = NULL;
 #ifdef	__sun

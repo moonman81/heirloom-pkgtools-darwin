@@ -53,6 +53,7 @@
 #include <pkglib.h>
 #include <libadm.h>
 #include <libinst.h>
+#include "heirloom_flags.h"
 
 #define	MAXPATHS	1024
 
@@ -140,6 +141,7 @@ extern int	checkscripts(char *inst_dir, int silent);
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgchk", HF_VERBOSE_TAKEN);
 	int	pkgfmt = 0;	/* Makes more sense as a pointer, but */
 				/*	18N is compromised. */
 	char	file[PATH_MAX+1],

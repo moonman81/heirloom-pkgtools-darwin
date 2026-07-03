@@ -63,6 +63,7 @@
 #include <libadm.h>
 #include <libinst.h>
 #include <spmizones_api.h>
+#include "heirloom_flags.h"
 
 extern char	*pkgdir;
 extern int	pkginfofind(char *path, char *pkg_dir, char *pkginst);
@@ -152,6 +153,7 @@ static void	dumpinfo(struct cfstat *dp, int pkgLngth);
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "pkginfo", HF_VERBOSE_TAKEN);
 	int	c;
 
 	pkgdir = NULL;

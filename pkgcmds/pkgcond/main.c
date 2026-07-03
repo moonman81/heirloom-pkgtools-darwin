@@ -103,6 +103,7 @@
 #include <messages.h>
 #include "pkgcond.h"
 #include "pkgcond_msgs.h"
+#include "heirloom_flags.h"
 
 /* Should be defined by cc -D */
 
@@ -301,6 +302,7 @@ static CMD_T cmds[] = {
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "pkgcond", 0);
 	GLOBALDATA_T	*gdt = NULL;
 	char		**newargv;
 	char		*p;

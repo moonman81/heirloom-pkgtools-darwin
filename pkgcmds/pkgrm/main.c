@@ -80,6 +80,7 @@
  */
 
 #include "quit.h"
+#include "heirloom_flags.h"
 
 #undef	P_tmpdir
 #define	P_tmpdir	"/var/tmp/"
@@ -265,6 +266,7 @@ static boolean_t	shall_we_continue(char *a_pkgInst, int a_npkgs);
 int
 main(int argc, char **argv)
 {
+	heirloom_flags(argc, argv, "pkgrm", HF_VERBOSE_TAKEN);
 	char			**category = NULL;
 	char			*altBinDir = (char *)NULL;
 	char			*catg_arg = NULL;

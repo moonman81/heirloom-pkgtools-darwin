@@ -67,6 +67,7 @@
 #include <dryrun.h>
 #include <messages.h>
 #include "pkginstall.h"
+#include "heirloom_flags.h"
 
 #undef	P_tmpdir
 #define	P_tmpdir	"/var/tmp/"
@@ -256,6 +257,7 @@ static char *cpio_names[] = {
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkginstall", HF_VERBOSE_TAKEN);
 	VFP_T			*cfTmpVfp = (VFP_T *)NULL;	/* t.contents */
 	VFP_T			*cfVfp = (VFP_T *)NULL;		/* contents */
 	VFP_T			*pkgmapVfp;	/* "../pkgmap" file */

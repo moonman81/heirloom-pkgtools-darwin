@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pkglib.h>
+#include "heirloom_flags.h"
 
 #define	COMMAND '!'
 #define	LSIZE 256
@@ -55,6 +56,7 @@ static int	docmd(char *cmd, char *file, char *input);
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgscripts", 0);
 	char	template[] = "/var/tmp/sedinpXXXXXX";
 	FILE	*fpout, *fp;
 	char	line[LSIZE],

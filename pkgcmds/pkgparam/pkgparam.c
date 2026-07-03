@@ -51,6 +51,7 @@
 #include <libinst.h>
 #include <dbtables.h>
 #include <nhash.h>
+#include "heirloom_flags.h"
 
 extern char	*pkgfile;
 
@@ -83,6 +84,7 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgparam", HF_VERBOSE_TAKEN);
 	char *value, *pkginst;
 	char *param, parambuf[128];
 	int c;

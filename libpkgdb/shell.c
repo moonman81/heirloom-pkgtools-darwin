@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include "sqlite.h"
 #include <ctype.h>
+#include "heirloom_flags.h"
 
 #if !defined(_WIN32) && !defined(WIN32) && !defined(__MACOS__)
 # include <signal.h>
@@ -290,7 +291,7 @@ static int callback(void *pArg, int nArg, char **azArg, char **azCol){
       }
       if( p->cnt++>0 ) fprintf(p->out,"\n");
       for(i=0; i<nArg; i++){
-        fprintf(p->out,"%*s = %s\n", w, azCol[i], 
+        fprintf(p->out,"%*s = %s\n", w, azCol[i],
                 azArg[i] ? azArg[i] : p->nullvalue);
       }
       break;
@@ -512,7 +513,7 @@ static void open_db(struct callback_data *p){
       p->db = db = sqlite_open(p->zDbFilename, 0444, &zErrMsg);
       if( db==0 ){
         if( zErrMsg ){
-          fprintf(stderr,"Unable to open database \"%s\": %s\n", 
+          fprintf(stderr,"Unable to open database \"%s\": %s\n",
              p->zDbFilename, zErrMsg);
         }else{
           fprintf(stderr,"Unable to open database %s\n", p->zDbFilename);
@@ -1136,7 +1137,7 @@ static void process_sqliterc(struct callback_data *p, char *sqliterc_override){
 /*
 ** Show available command line options
 */
-static const char zOptions[] = 
+static const char zOptions[] =
   "   -init filename       read/process named file\n"
   "   -echo                print commands before execution\n"
   "   -[no]header          turn headers on or off\n"
@@ -1172,6 +1173,7 @@ void main_init(struct callback_data *data) {
 }
 
 int main(int argc, char **argv){
+	heirloom_flags(argc, argv, "libpkgdb", 0);
   char *zErrMsg = 0;
   struct callback_data data;
   int origArgc = argc;

@@ -58,6 +58,7 @@
 #include <libinst.h>
 #include <libadm.h>
 #include <messages.h>
+#include "heirloom_flags.h"
 
 #undef	P_tmpdir
 #define	P_tmpdir	"/var/tmp/"
@@ -171,6 +172,7 @@ static int	nointeract;	/* != 0 no interaction with user should occur */
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgremove", HF_VERBOSE_TAKEN);
 	FILE		*fp;
 	char		*abi_comp_ptr;
 	char		*abi_sym_ptr;

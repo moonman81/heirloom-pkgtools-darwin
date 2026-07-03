@@ -40,10 +40,12 @@
 #include <locale.h>
 #include <libintl.h>
 #include "libadm.h"
+#include "heirloom_flags.h"
 
 int
 main(int argc, char *argv[])
 {
+	heirloom_flags(argc, argv, "pkgname", 0);
 #if !defined(TEXT_DOMAIN)	/* Should be defined by cc -D */
 #define	TEXT_DOMAIN "SYS_TEST"
 #endif
