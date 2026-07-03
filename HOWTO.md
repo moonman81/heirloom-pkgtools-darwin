@@ -224,3 +224,92 @@ See `patches/MANIFEST.md` for the per-patch index.
 - `man/*.7` — per-command reference.
 - `patches/MANIFEST.md` — per-patch index.
 - Workspace repo `PORT.md` — full decisions record for the port.
+
+## Modality — version, variant, dialect
+
+Every installed binary in this port honours a shared set of flags
+and environment variables that let you pick which SVR4 personality
+you want at invocation time:
+
+| Flag                       | Purpose                                        |
+| :------------------------- | :--------------------------------------------- |
+| `--help`, `--usage`, `-H`  | invoke `man(1)` on this tool                   |
+| `--version`, `-V`          | print the port banner + built + active variant |
+| `--variants`               | list installed personality variants            |
+| `--describe-modality`      | print the modality matrix for this tool        |
+| `--variant=<name>`         | re-exec the requested variant                  |
+| `--dialect=<name>`         | human-friendly synonym for `--variant`         |
+
+Environment variables (highest wins first):
+
+1. `HEIRLOOM_VARIANT=<name>`
+2. `HEIRLOOM_DIALECT=<name>`
+3. `SYSV3` (Ritter's classic SVID3 selector)
+4. `HEIRLOOM_PORT_VERSION_REQ=<version-string>` — pin a script to a
+   specific port revision; the tool exits with `EX_CONFIG (78)` if
+   the running port version does not match.
+
+Variants (directory-based):
+
+| Variant name  | Path                              | Behavioural style        |
+| :------------ | :-------------------------------- | :----------------------- |
+| `default`     | `$PREFIX/bin/<tool>`              | SVID3                    |
+| `posix`       | `$PREFIX/bin/posix/<tool>`        | POSIX/SUS                |
+| `posix2001`   | `$PREFIX/bin/posix2001/<tool>`    | POSIX-2001/SUS3          |
+| `s42`         | `$PREFIX/bin/s42/<tool>`          | SVID4 subset             |
+| `ucb`         | `$PREFIX/ucb/<tool>`              | UCB / BSD                |
+| `ccs`         | `$PREFIX/ccs/bin/<tool>`          | CCS (`make`, `sccs`, …)  |
+
+Recognised dialects (mapped to variants):
+
+- `svid3`, `svr3`, `svr4`, `sysv`, `sysv3` → `default`
+- `posix`, `sus`, `sus2`                     → `posix`
+- `posix2001`, `sus3`                        → `posix2001`
+- `s42`, `svid4`                             → `s42`
+- `ucb`, `bsd`                               → `ucb`
+- `ccs`                                      → `ccs`
+
+Full detail: `man 7 heirloom-modality`.
+
+### Examples
+
+```sh
+# Get the manual page for a tool via the shim.
+ls --help
+
+# Check the port revision.
+pkgadd --version
+
+# See which variants are installed for cp.
+cp --variants
+
+# Force BSD-flavour behaviour for one invocation.
+HEIRLOOM_DIALECT=bsd ls -la
+
+# Same via long flag.
+ls --variant=ucb -la
+
+# Pin a script to a specific port revision.
+HEIRLOOM_PORT_VERSION_REQ=1.1.0-darwin-arm64 sh script.sh
+```
+
+## Info-format documentation
+
+Alongside the man pages, the port ships an Info-format guide at
+`/opt/heirloom/share/info/heirloom.info`. Read it with:
+
+```sh
+info heirloom
+```
+
+The Info document is a companion, not a replacement, for the per-tool
+man pages. When in doubt, prefer `man <tool>`.
+
+## References
+
+- Man pages:            `/opt/heirloom/share/man/5man/`
+- Info-format guide:    `/opt/heirloom/share/info/heirloom.info`
+- Skills catalogue:     `skills/<skill-name>/SKILL.md`
+- Provenance:           `PROVENANCE.md`
+- Bibliography:         `BIBLIOGRAPHY.md`
+- Coverage matrix:      workspace repo's `hardening/COVERAGE-MATRIX.md`

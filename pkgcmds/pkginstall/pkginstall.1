@@ -1,0 +1,21 @@
+.TH PKGINSTALL 1M "2026-07-03" "Heirloom Darwin port" "Package Administration"
+.SH NAME
+pkginstall \- internal install helper for pkgadd
+.SH SYNOPSIS
+.B pkginstall
+.I "internal-args"
+.SH DESCRIPTION
+.B pkginstall
+is an internal helper program invoked by
+.BR pkgadd (1M).
+End users should not invoke
+.B pkginstall
+directly. Its command line, environment, and exit codes are
+subject to change without notice.
+.SH HEIRLOOM DARWIN PORT
+Supports the shared modality flags. See
+.BR heirloom-modality (7).
+.SH SEE ALSO
+.BR pkgadd (1M),
+.BR pkgchk (1M),
+.BR pkginfo (1).

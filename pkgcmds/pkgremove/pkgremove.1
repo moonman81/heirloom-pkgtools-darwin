@@ -1,0 +1,19 @@
+.TH PKGREMOVE 1M "2026-07-03" "Heirloom Darwin port" "Package Administration"
+.SH NAME
+pkgremove \- internal remove helper for pkgrm
+.SH SYNOPSIS
+.B pkgremove
+.I "internal-args"
+.SH DESCRIPTION
+.B pkgremove
+is an internal helper program invoked by
+.BR pkgrm (1M).
+End users should not invoke
+.B pkgremove
+directly.
+.SH HEIRLOOM DARWIN PORT
+Supports the shared modality flags. See
+.BR heirloom-modality (7).
+.SH SEE ALSO
+.BR pkgrm (1M),
+.BR pkgchk (1M).
