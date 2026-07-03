@@ -101,3 +101,18 @@ info heirloom
 - <https://github.com/moonman81/heirloom-doctools-darwin>
 - <https://github.com/moonman81/heirloom-pkgtools-darwin>
 - <https://github.com/moonman81/heirloom-workspace-darwin>
+
+## Extended Heirloom Darwin Port universe
+
+Three additional companion repos extend this port beyond the five
+code + one workspace repos:
+
+- <https://github.com/moonman81/heirloom-vi-darwin> — Ritter's ex/vi
+  Darwin patches-only scaffold.
+- <https://github.com/moonman81/heirloom-citations-darwin> — canonical
+  reference documentation (Bell Labs CSTRs, BSTJ 1978, K&R draft).
+- <https://github.com/moonman81/heirloom-ancestors-darwin> — manifests +
+  notes for the ancestor source code (V7, 32V, DWB 1.0, PWB, PCC, BSDs).
+
+The full universe map is at
+<https://github.com/moonman81/heirloom-workspace-darwin/blob/main/TREE.md>.

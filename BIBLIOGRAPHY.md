@@ -122,3 +122,18 @@ If you patch a specific tool and want to cite a paper or standard
 that motivated the fix, append a row under **Package-specific
 references** in the source of this file and commit alongside the
 patch. Keep entries in APA-adjacent format for consistency.
+
+## Cross-references to the sibling reference repos
+
+Where a source cited here is preserved locally, the local path is
+given via the sibling `heirloom-citations-darwin` or
+`heirloom-ancestors-darwin` repo:
+
+- **Cited primary documents** (CSTRs, BSTJ papers, K&R draft, USG
+  documents): see
+  <https://github.com/moonman81/heirloom-citations-darwin>.
+- **Ancestor source manifests** (V7, 32V, DWB 1.0, PWB, PCC, 1-4BSD):
+  see <https://github.com/moonman81/heirloom-ancestors-darwin>.
+
+Cross-references are hyperlinks by design; if a link 404s, fall back
+to the upstream TUHS Archive at <https://www.tuhs.org/Archive/>.
